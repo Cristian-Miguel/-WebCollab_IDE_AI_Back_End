@@ -1,0 +1,103 @@
+// Archivo de Esquema de Prisma
+// Se utiliza para definir el modelo de datos y la conexión a la base de datos.
+
+// Configuración del proveedor de base de datos
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Configuración de la fuente de datos (MySQL)
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// =================================================================
+// MODELO DE ROLES
+// Requerimientos: customer, administrador, soporte. Eliminar rol (borrado lógico).
+// =================================================================
+
+model Role {
+  id          String    @id @default(uuid()) @db.VarChar(255)
+  name        ROLE_TYPE @unique
+  description String?   @db.VarChar(255)
+  isActive    Boolean   @db.Bit(1) @map("is_active")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  users       User[]
+}
+
+// =================================================================
+// MODELO DE USUARIO
+// Incluye todos los campos de registro y seguridad.
+// =================================================================
+
+model User {
+  id              String    @id @default(uuid()) @db.VarChar(255)
+  email           String    @unique @db.VarChar(255)
+  password        String    @db.LongText
+  fullName        String    @db.VarChar(255)
+  rfc             String    @db.VarChar(14)
+  curp            String    @db.VarChar(18)
+  profileImageUrl String?   @map("profile_image_url") @db.LongText
+  roleId          String    @map("role_id")    @db.VarChar(255)
+  addressId       String    @map("address_id") @db.VarChar(255)
+  birthDate       DateTime  @map("birth_date") @db.Date
+  lockUntil       DateTime? @map("lock_until")
+  lastLogin       DateTime? @map("last_login")
+  lastLogout      DateTime? @map("last_logout")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  isEmailVerified Boolean   @db.Bit(1) @default(false) @map("is_email_verified")
+  isAccountLocked Boolean   @db.Bit(1) @default(false) @map("is_account_locked")
+  isDeleted       Boolean   @db.Bit(1) @default(false) @map("is_deleted")
+  loginAttempts   Int       @default(0) @map("login_attempts")
+  role            Role      @relation(fields: [roleId], references: [id])
+  address         Address   @relation(fields: [addressId], references: [id])
+  revokedTokens   RevokedToken[]
+  @@map("users")
+}
+
+// =================================================================
+// MODELO DE DIRECCIÓN
+// Se separa para normalizar y gestionar la dirección completa.
+// =================================================================
+
+model Address {
+    id              String    @id @default(uuid()) @db.VarChar(255)
+    street          String    @db.VarChar(255)
+    internalNumber  String?   @db.VarChar(255) @map("internal_number")
+    externalNumber  String    @db.VarChar(255) @map("external_number")
+    neighborhood    String    @db.VarChar(255)
+    locality        String    @db.VarChar(255)
+    municipality    String    @db.VarChar(255)
+    state           String    @db.VarChar(255)
+    zipCode         String    @db.VarChar(8) @map("zip_code")
+    country         String    @db.VarChar(100)
+    createdAt       DateTime  @default(now())
+    updatedAt       DateTime  @updatedAt
+    user            User[]
+    @@map("addresses")
+}
+
+// =================================================================
+// MODELO DE TOKENS REVOCADOS (Blacklist)
+// Requerimiento: Lista negra de tokens.
+// =================================================================
+
+model RevokedToken {
+    id          String    @id @default(uuid()) @db.VarChar(255)
+    tokenHash   String    @map("token_hash") @unique
+    expiresAt   DateTime  @map("expires_at")
+    createdAt   DateTime  @default(now())
+    userId      String    @db.VarChar(255)
+    user        User      @relation(fields: [userId], references: [id])
+    @@map("revoked_tokens")
+}
+
+
+enum ROLE_TYPE {
+  ADMINISTRATOR
+  CUSTOMER
+  SUPPORT
+}
