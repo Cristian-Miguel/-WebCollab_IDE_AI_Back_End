@@ -1,5 +1,5 @@
 import * as dotenv from 'dotenv';
-import express, { Express, Router } from 'express';
+import express, { Express } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -9,6 +9,7 @@ import { LoggerManage } from './core/config/logger'
 
 import { SocketManageEvent } from './core/config/socket_manage'; 
 import AuthRoutes from './feature/auth/auth_routes';
+import SessionRoutes from './modules/session/session.routes';
 import { exceptionManage } from './core/exception/exception_manage';
 import UserRoutes from './feature/user/user_routes';
 import cookieParser from 'cookie-parser';
@@ -24,9 +25,14 @@ export class Server {
     private io: SocketIOServer;
     private mainRoute: string;
     private routesSrc: { [key: string]: string };
+    private allowedOrigins: string[];
 
     constructor() {
         dotenv.config(); 
+        this.allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173')
+            .split(',')
+            .map((origin) => origin.trim())
+            .filter(Boolean);
         
         this.app = express();
         this.port = process.env.PORT || 3000;
@@ -34,7 +40,7 @@ export class Server {
         
         this.io = new SocketIOServer(this.httpServer, {
             cors: {
-                origin: process.env.CORS_ORIGINS?.split(',') || '*',
+                origin: this.allowedOrigins,
                 methods: ['GET', 'POST'],
                 credentials: true,
             }
@@ -53,10 +59,8 @@ export class Server {
      */
     private middlewares(): void {
         
-        const allowedOrigins = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : '*';
-        
         this.app.use(cors({
-            origin: process.env.CORS_ORIGINS?.split(',') || '*',//origin: allowedOrigins
+            origin: this.allowedOrigins,
             methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
             credentials: true,
         }));
@@ -80,6 +84,7 @@ export class Server {
         return {
             auth: `${this.mainRoute}/auth`,
             user: `${this.mainRoute}/user`,
+            sessions: `${this.mainRoute}/sessions`,
         };
     }
 
@@ -89,6 +94,7 @@ export class Server {
     private routes(): void {
         this.app.use(this.routesSrc.auth, AuthRoutes);
         this.app.use(this.routesSrc.user, UserRoutes);
+        this.app.use(this.routesSrc.sessions, SessionRoutes);
 
         this.app.get('/', (req, res) => {
             res.status(200).json({ 

@@ -8,12 +8,10 @@ import { ROLES } from '../../core/const/roles';
 import { UserRepository } from '../user/user_repository';
 import { UserApi, UserDomain, toUserDomain, userToUserDomain, toUserApi } from '../user/user_model';
 import { RoleRepository } from '../role/role_repository';
-import { AddressRepository } from '../address/address_repository';
-import { addressToAddressDomain } from '../address/address_model';
 import { roleToRoleDomain } from '../role/role_model';
 import { sendEmail } from '../../core/config/mail_sender';
 import { uploadSingleImage } from '../../core/config/multer_manage';
-import { Address, PrismaClient, Role, ROLE_TYPE, User } from '@prisma/client';
+import { PrismaClient, Role, ROLE_TYPE, User } from '@prisma/client';
 import { DatabaseManage } from '../../core/config/database_manage';
 import { SuccessResponse } from '../../core/model/success';
 import { FilterOrderAdapter, Filter, Order } from '../../core/config/filter_order_adapter';
@@ -24,13 +22,11 @@ import { SUCCESS_CODES, SUCCESS_MESSAGES } from '../../core/const/sucess_message
  */
 export class UserService {
     private userRepository: UserRepository;
-    private addressRepository: AddressRepository;
     private roleRepository: RoleRepository;
     private prisma: PrismaClient;
 
     constructor() {
         this.userRepository = new UserRepository();
-        this.addressRepository = new AddressRepository();
         this.roleRepository = new RoleRepository();
         this.prisma = DatabaseManage.getInstance();
     }
@@ -63,17 +59,14 @@ export class UserService {
             let userDomain: UserDomain = toUserDomain(userData);
 
             const userDB: User = await this.userRepository.updateUser(userDomain, tx);
-            const addressDB: Address = await this.addressRepository.updateAddress( user.addressId, userDomain.address, tx);
             const roleDB: Role = await this.roleRepository.getRoleByName(userDomain.role.name) as Role;
 
-            userDomain = userToUserDomain(userDB, addressDB, roleDB);
-            userDomain.addressId = addressDB.id;
+            userDomain = userToUserDomain(userDB, roleDB);
             userDomain.roleId = roleDB.id;
-            userDomain.address = addressToAddressDomain(addressDB);
             userDomain.role = roleToRoleDomain(roleDB);
             userDomain.password = '';
 
-            return toUserApi(userDomain, userDomain.address, userDomain.role);
+            return toUserApi(userDomain, userDomain.role);
         });
 
         LoggerManage.info('User logged in successfully.', { email });
@@ -120,17 +113,14 @@ export class UserService {
             userDomain.profileImageUrl = profileImageUrl || '';
 
             const role: Role = await this.roleRepository.getRoleByName(userDomain.role.name) as Role;
-            const address: Address = await this.addressRepository.createAddress(userDomain.address, tx);
-            userDomain.addressId = address.id;
             userDomain.roleId = defaultRole.id;
             const user: User = await this.userRepository.createUser(userDomain, tx);
             
-            userDomain.address = addressToAddressDomain(address);
             userDomain.role = roleToRoleDomain(role);
             userDomain.id = user.id;
             userDomain.password = '';
             
-            return toUserApi(userDomain, userDomain.address, userDomain.role);
+            return toUserApi(userDomain, userDomain.role);
         });
 
         const validationToken = JwtManage.generateEmailValidationToken(
@@ -167,20 +157,15 @@ export class UserService {
         if (!user || user.isDeleted) {
             throw new AppException('USER_NOT_FOUND');
         }
-        const address = await this.addressRepository.getAddressById(user.addressId);
         const role = await this.roleRepository.getRoleByName(user.roleId);
-        if (!address) {
-            throw new AppException('ADDRESS_NOT_FOUND');
-        }
         if (!role) {
             throw new AppException('ROLE_NOT_FOUND');
         }
-        const userDomain = userToUserDomain(user, address, role);
-        userDomain.address = addressToAddressDomain(address);
+        const userDomain = userToUserDomain(user, role);
         userDomain.role = roleToRoleDomain(role);
         userDomain.password = '';
         return new SuccessResponse<UserApi>(
-            toUserApi(userDomain, userDomain.address, userDomain.role),
+            toUserApi(userDomain, userDomain.role),
             {
                 code: SUCCESS_MESSAGES.USER_GET_SUCCESS.code,
                 message: SUCCESS_MESSAGES.USER_PAGINATE_SUCCESS.message,
@@ -225,8 +210,6 @@ export class UserService {
             'id',
             'email',
             'fullName',
-            'rfc', 
-            'curp', 
             'birthDate',
             'isEmailVerified', 
             'isAccountLocked', 
@@ -235,7 +218,7 @@ export class UserService {
             'lastLogin', 
             'lastLogout',
             'isDeleted', 
-            'createdAt', 
+            'registeredAt',
             'updatedAt',    
             'role.name',
         ] as const;
@@ -253,14 +236,12 @@ export class UserService {
         const usersApi: UserApi[] = [];
 
         for (const user of data) {
-            const address = await this.addressRepository.getAddressById(user.addressId);
             const role = await this.roleRepository.getRoleByName(user.roleId);
-            if (address && role) {
-                const userDomain = userToUserDomain(user, address, role);
-                userDomain.address = addressToAddressDomain(address);
+            if (role) {
+                const userDomain = userToUserDomain(user, role);
                 userDomain.role = roleToRoleDomain(role);
                 userDomain.password = '';
-                usersApi.push(toUserApi(userDomain, userDomain.address, userDomain.role));
+                usersApi.push(toUserApi(userDomain, userDomain.role));
             }
         }
 

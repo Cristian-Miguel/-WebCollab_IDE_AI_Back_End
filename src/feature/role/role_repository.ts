@@ -1,7 +1,6 @@
-import { PrismaClient, User, RevokedToken, Role, ROLE_TYPE } from '@prisma/client';
+import { PrismaClient, User, RevokedToken, Role, ROLE_TYPE, Prisma } from '@prisma/client';
 import { DatabaseManage } from '../../core/config/database_manage';
 import { DBException } from '../../core/exception/db_exception';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { RoleDomain } from './role_model';
 
 export class RoleRepository {
@@ -23,7 +22,7 @@ export class RoleRepository {
             return newRole;
         }
         catch (error) {
-            if (error instanceof PrismaClientKnownRequestError) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, error.message);
             }
             throw error;
@@ -40,7 +39,7 @@ export class RoleRepository {
             return role;
         }
         catch (error) {
-            if (error instanceof PrismaClientKnownRequestError) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, error.message);
             }
             throw error;

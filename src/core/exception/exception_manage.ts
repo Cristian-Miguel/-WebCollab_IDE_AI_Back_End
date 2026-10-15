@@ -94,7 +94,7 @@ export const exceptionManage = (
 
 
 // Define las claves sensibles dentro de exception_manage.ts o impórtalas
-const sensitiveKeys = ['password', 'rfc', 'curp', 'token', 'fullName']; 
+const sensitiveKeys = ['password', 'token', 'fullName']; 
 
 /**
  * Enmascara los valores sensibles directamente en una cadena de texto (ej. stack trace).

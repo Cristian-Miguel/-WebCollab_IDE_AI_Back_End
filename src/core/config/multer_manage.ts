@@ -1,5 +1,4 @@
 import multer from 'multer';
-import { Request } from 'express';
 import * as path from 'path';
 
 // Directorio donde se guardarán temporalmente los archivos subidos.
@@ -11,24 +10,13 @@ const UPLOAD_DIR = path.join(process.cwd(), 'uploads', 'profile_images');
  * Define la ubicación y cómo nombrar los archivos.
  */
 const storage = multer.diskStorage({
-    destination: (
-        req: Request,
-        file: Express.Multer.File,
-        callback: (error: Error | null, destination: string) => void
-    ): void => {
-        // En un proyecto real, se debe asegurar que el directorio exista (fs.mkdirSync).
+    destination: (_req, _file, callback): void => {
         callback(null, UPLOAD_DIR);
     },
 
-    filename: (
-        req: Request,
-        file: Express.Multer.File,
-        callback: (error: Error | null, filename: string) => void
-    ): void => {
-        // Genera un nombre de archivo único para evitar colisiones.
+    filename: (_req, file, callback): void => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
         const fileExtension = path.extname(file.originalname);
-        // Concatenar el sufijo único con la extensión original.
         callback(null, `profile-${uniqueSuffix}${fileExtension}`);
     }
 });
@@ -37,18 +25,11 @@ const storage = multer.diskStorage({
  * Filtro de archivos para aceptar solo formatos de imagen comunes.
  * Se utiliza para validar que el archivo sea una imagen de perfil.
  */
-const fileFilter = (
-    req: Request,
-    file: Express.Multer.File,
-    callback: multer.FileFilterCallback
-): void => {
-    // Comprueba el mimetype del archivo.
+const fileFilter: multer.Options['fileFilter'] = (_req, file, callback): void => {
     if (file.mimetype.startsWith('image/')) {
-        callback(null, true); // Aceptar el archivo
+        callback(null, true);
     } else {
-        // Rechazar el archivo con un error que será capturado por el middleware de Multer.
-        // Podrías lanzar una excepción personalizada aquí para un manejo más fino.
-        callback(new Error('Invalid file type. Only image files are allowed for profile pictures.') as any, false);
+        callback(new Error('Invalid file type. Only image files are allowed for profile pictures.'));
     }
 };
 

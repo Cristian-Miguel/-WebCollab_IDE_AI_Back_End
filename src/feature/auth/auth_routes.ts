@@ -25,8 +25,7 @@ router.post('/register', [
     body('password').isLength({ min: 8, max: 16 }).withMessage(ERROR_MESSAGES.INVALID_PASSWORD_LENGTH.message),
     body('password').matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&-_])[A-Za-z\d@$!%*?&-_]{8,16}$/).withMessage(ERROR_MESSAGES.INVALID_PASSWORD_FORMAT.message),
     body('fullName').exists().withMessage(ERROR_MESSAGES.REQUIRED_FIELD.message),
-    body('rfc').exists().withMessage(ERROR_MESSAGES.REQUIRED_FIELD.message).isLength({ min: 12, max: 13 }).withMessage('RFC inválido.'),
-    body('curp').exists().withMessage(ERROR_MESSAGES.REQUIRED_FIELD.message).isLength({ min: 18, max: 18 }).withMessage('CURP inválido.'),
+    body('birthDate').exists().withMessage(ERROR_MESSAGES.REQUIRED_FIELD.message).isISO8601().withMessage(ERROR_MESSAGES.INVALID_FORMAT.message),
     dataValidate,
     asyncWrapper(authController.register)
 ]);
@@ -40,7 +39,7 @@ router.post('/logout', [
 
 // 4. REFRESH TOKEN
 // Requerimiento: Generar un nuevo token base con el refresh token.
-router.post('/refresh', [
+router.post(['/refresh-token', '/refresh'], [
     // body('refreshToken').exists().withMessage(ERROR_MESSAGES.REQUIRED_FIELD.message).isJWT().withMessage(ERROR_MESSAGES.JWT_INVALID.message),
     // dataValidate,
     asyncWrapper(authController.refreshToken)
@@ -83,8 +82,6 @@ router.post('/email/validate', [
 // Requerimiento: El usuario entra al link que envía el token (aquí se recibe el token por POST).
 router.post('/email/validate/request', [
     AuthMiddleware.validateToken,
-    body('email').exists().withMessage(ERROR_MESSAGES.REQUIRED_FIELD.message).isEmail().withMessage(ERROR_MESSAGES.INVALID_FORMAT.message),
-    dataValidate,
     asyncWrapper(authController.resendValidateEmail)
 ]);
 

@@ -1,20 +1,19 @@
+import { randomUUID } from 'node:crypto';
 import { BcryptManage } from '../../core/config/bcript_manage';
-import { JwtManage, AccessTokenPayload, RefreshTokenPayload } from '../../core/config/jwt_manage';
+import { JwtManage } from '../../core/config/jwt_manage';
 import { LoggerManage } from '../../core/config/logger'; // Asumiendo que has importado LoggerManage
 import { AppException } from '../../core/exception/app_exception';
-import { Address, PrismaClient, Role, User } from '@prisma/client'; // Importamos tipos de Prisma
+import { PrismaClient, Role, User } from '@prisma/client'; // Importamos tipos de Prisma
 import { UserRepository } from '../user/user_repository';
-import { AuthLoginBody, AuthResponse } from './auth_model';
+import { AuthLoginBody, AuthResponse, AuthSessionContext } from './auth_model';
 import { AuthRepository } from './auth_repository';
 import { sendEmail } from '../../core/config/mail_sender'; // Importamos el mail_sender
 import { uploadSingleImage } from '../../core/config/multer_manage'
 import { toUserDomain, UserApi, UserDomain, userToUserDomain } from '../user/user_model';
 import { DatabaseManage } from '../../core/config/database_manage';
-import { AddressRepository } from '../address/address_repository';
 import { RoleRepository } from '../role/role_repository';
 import { ROLES } from '../../core/const/roles';
 import { roleToRoleDomain } from '../role/role_model';
-import { addressToAddressDomain } from '../address/address_model';
 import { resetPasswordTemplate } from '../../core/email_template/reset_password_template';
 import { validationEmailTemplate } from '../../core/email_template/validation_email_template';
 import { passwordChangedTemplate } from '../../core/email_template/password_changed_template';
@@ -25,16 +24,15 @@ import { passwordChangedTemplate } from '../../core/email_template/password_chan
 export class AuthService {
     private userRepository: UserRepository;
     private authRepository: AuthRepository;
-    private addressRepository: AddressRepository;
     private roleRepository: RoleRepository;
     private prisma: PrismaClient;
     private static readonly MAX_LOGIN_ATTEMPTS = 5;
     private static readonly LOCKOUT_TIME_MINUTES = 15;
+    private static readonly REFRESH_RENEWAL_THRESHOLD_MS = 2 * 24 * 60 * 60 * 1000;
     
     constructor() {
         this.userRepository = new UserRepository();
         this.authRepository = new AuthRepository();
-        this.addressRepository = new AddressRepository();
         this.roleRepository = new RoleRepository();
         this.prisma = DatabaseManage.getInstance();
     }
@@ -42,41 +40,38 @@ export class AuthService {
     /**
      * @description Proceso de inicio de sesión completo.
      */
-    public async login(credentials: AuthLoginBody): Promise<AuthResponse> {
+    public async login(credentials: AuthLoginBody, context: AuthSessionContext = {}): Promise<AuthResponse> {
+        const startedAt = Date.now();
         const { email, password } = credentials;
         const user = await this.userRepository.findUserByEmail(email);
 
         if (!user || user.isDeleted) {
-            throw new AppException('USER_NOT_FOUND'); 
+            await this.waitForMinimumAuthenticationDuration(startedAt);
+            throw new AppException('INVALID_CREDENTIALS');
         }
         
         if (user.isAccountLocked && user.lockUntil && user.lockUntil > new Date()) {
             throw new AppException('ACCOUNT_LOCKED'); 
         }
 
-        const [isPasswordMatch] = await this.simulateTimeAndCompare(password, user.password);
+        const isPasswordMatch = await this.simulateTimeAndCompare(password, user.password, startedAt);
 
         if (!isPasswordMatch) {
             await this.handleFailedLogin(user); 
             throw new AppException('INVALID_CREDENTIALS');
         }
 
-        const accessToken = JwtManage.generateAccessToken(
-            user.id,
-            user.email,
-            user.profileImageUrl || '',
-            user.role.name
-        );
-        const refreshToken = JwtManage.generateRefreshToken(
-            user.id,
-            user.email,
-        );
-
         await this.userRepository.updateLastLoginAndResetAttempts(user.id);
         
         LoggerManage.info('User logged in successfully.', { email });
 
-        return { accessToken: accessToken, refreshToken };
+        return this.createSessionTokens(
+            user.id,
+            user.email,
+            user.profileImageUrl || '',
+            user.role.name,
+            context
+        );
     }
     
     /**
@@ -85,22 +80,25 @@ export class AuthService {
      * @param hash Contraseña hasheada.
      * @returns [boolean, number] Matcheo y tiempo transcurrido en ms.
      */
-    private async simulateTimeAndCompare(password: string, hash: string): Promise<[boolean, number]> {
+    private async simulateTimeAndCompare(password: string, hash: string, startedAt: number): Promise<boolean> {
         const MIN_DURATION_MS = 1000; // 1 segundo (Requerimiento)
-        const start = Date.now();
         
         const matchPromise = BcryptManage.comparePassword(password, hash);
-        const elapsed = Date.now() - start;
+        const elapsed = Date.now() - startedAt;
         const remainingDelay = MIN_DURATION_MS - elapsed;
         
         if (remainingDelay > 0) {
             await new Promise(resolve => setTimeout(resolve, remainingDelay));
         }
 
-        const isMatch = await matchPromise;
-        const finalDuration = Date.now() - start;
+        return matchPromise;
+    }
 
-        return [isMatch, finalDuration];
+    private async waitForMinimumAuthenticationDuration(startedAt: number): Promise<void> {
+        const remainingDelay = 1000 - (Date.now() - startedAt);
+        if (remainingDelay > 0) {
+            await new Promise((resolve) => setTimeout(resolve, remainingDelay));
+        }
     }
 
     /**
@@ -127,7 +125,11 @@ export class AuthService {
      * @param userData Datos de registro.
      * @param profileImageFile Archivo de imagen subido por Multer.
      */
-    public async register(userData: UserApi, profileImageFile: Express.Multer.File | undefined): Promise<AuthResponse> {
+    public async register(
+        userData: UserApi,
+        profileImageFile: Express.Multer.File | undefined,
+        context: AuthSessionContext = {}
+    ): Promise<AuthResponse> {
         const { password, ...rest } = userData;
 
         let profileImageUrl: string = '';
@@ -146,15 +148,17 @@ export class AuthService {
             throw new AppException('USER_ALREADY_EXISTS', null, 'Ya existe una cuenta con este correo electrónico.');
         }
 
+        const birthDate = new Date(userData.birthDate);
+        if (Number.isNaN(birthDate.getTime())) {
+            throw new AppException('INVALID_FORMAT', null, 'La fecha de nacimiento no es válida.');
+        }
+
         const result: UserDomain = await this.prisma.$transaction(async (tx) => {
-            const userDomain: UserDomain = toUserDomain(userData); 
+            const userDomain: UserDomain = toUserDomain({ ...userData, birthDate });
             const role: Role = await this.roleRepository.getRoleByName(ROLES.CUSTOMER);
             userDomain.role = roleToRoleDomain(role);
             userDomain.roleId = role.id;
 
-            const address: Address = await this.addressRepository.createAddress(userDomain.address, tx);
-            userDomain.address = addressToAddressDomain(address);
-            userDomain.addressId = address.id;
             userDomain.password = passwordHash;
             userDomain.profileImageUrl = profileImageUrl;
 
@@ -184,96 +188,143 @@ export class AuthService {
         });
         
         LoggerManage.info('User registered and validation email sent.', { email: result.email });
-        const accessToken = JwtManage.generateAccessToken(
+        await this.userRepository.updateLastLoginAndResetAttempts(result.id!);
+
+        return this.createSessionTokens(
             result.id!,
             result.email,
             result.profileImageUrl || '',
-            'CUSTOMER'
+            'CUSTOMER',
+            context
         );
-        const refreshToken = JwtManage.generateRefreshToken(
-            result.id!,
-            result.email,
-        );
+    }
 
-        await this.userRepository.updateLastLoginAndResetAttempts(result.id!);
+    private async createSessionTokens(
+        userId: string,
+        email: string,
+        profileImageUrl: string,
+        role: string,
+        context: AuthSessionContext
+    ): Promise<AuthResponse> {
+        const sessionId = randomUUID();
+        const accessToken = JwtManage.generateAccessToken(
+            userId,
+            email,
+            profileImageUrl,
+            role,
+            sessionId
+        );
+        const refreshToken = JwtManage.generateRefreshToken(userId, email, sessionId);
+        const expiresAt = JwtManage.getExpiredAtFromToken(refreshToken);
+
+        if (!expiresAt) {
+            throw new AppException('JWT_REFRESH_EXPIRED');
+        }
+
+        await this.authRepository.createSession({
+            id: sessionId,
+            userId,
+            refreshTokenHash: await BcryptManage.hashTokenForBlacklist(refreshToken),
+            expiresAt,
+            ip: context.ip,
+            userAgent: context.userAgent?.slice(0, 512),
+        });
 
         return { accessToken, refreshToken };
     }
 
-    /**
-     * @description Cierra la sesión y guarda el token en la lista negra.
-     */
-    public async logout(accessToken: string, refreshToken: string): Promise<void> {
-        const payload = JwtManage.verifyAccessToken(refreshToken) as AccessTokenPayload;
-        const exp: Date | undefined = JwtManage.getExpiredAtFromToken(refreshToken);
-        const tokenHash: string = await BcryptManage.hashTokenForBlacklist(refreshToken);
-
-        const user: User | null  = await this.userRepository.findUserById(payload.sub);
-        const userEmail = user ? user.email : 'unknown';
-
+    public async logout(sessionId: string, userId: string): Promise<void> {
+        const user = await this.userRepository.findUserById(userId);
         if (!user || user.isDeleted) {
-            throw new AppException('USER_NOT_FOUND', null, 'No existe esa cuenta.');
+            throw new AppException('SESSION_INACTIVE');
         }
 
         await this.prisma.$transaction(async (tx) => {
-            await this.userRepository.updateLastLogout(user.id, tx);
+            const invalidated = await this.authRepository.invalidateSession(sessionId, userId, tx);
+            if (!invalidated) {
+                throw new AppException('SESSION_INACTIVE');
+            }
 
-            await this.authRepository.saveBlockToken(tokenHash, exp!, user.id, tx);
+            await this.userRepository.updateLastLogout(userId, tx);
         });
-        
-        LoggerManage.info('User logged out.', { userEmail });
+
+        LoggerManage.info('User logged out.', { userId });
     }
 
     /**
      * @description Genera un nuevo Access Token y Refresh Token si el actual es válido.
      */
-    public async refreshAccessToken(refreshToken: string): Promise<AuthResponse> {
-        const payload = JwtManage.verifyRefreshToken(refreshToken);
-        let expiredRefreshToken: Date | undefined;
+    public async refreshAccessToken(
+        refreshToken: string,
+        context: AuthSessionContext = {}
+    ): Promise<AuthResponse> {
+        let payload: ReturnType<typeof JwtManage.verifyRefreshToken>;
         try {
-            expiredRefreshToken = JwtManage.getExpiredAtFromToken(refreshToken);
+            payload = JwtManage.verifyRefreshToken(refreshToken);
         } catch (error) {
-            throw new AppException('SESSION_INACTIVE', null, 'Su sesión ha expirado por inactividad. Inicie sesión nuevamente.'); 
+            throw new AppException('SESSION_INACTIVE', error, 'Su sesión ha expirado. Inicie sesión nuevamente.');
         }
-        
-        const DAYS_THRESHOLD = 5;
-        
-        if(!expiredRefreshToken){
+
+        const expiresAt = JwtManage.getExpiredAtFromToken(refreshToken);
+        if (!expiresAt) {
             throw new AppException('JWT_REFRESH_EXPIRED');
         }
 
-        const daysToExpire = this.calcularDiasFaltantes(new Date(), expiredRefreshToken);
         const tokenHash: string = await BcryptManage.hashTokenForBlacklist(refreshToken);
-
-        if(await this.authRepository.isBlockToken(tokenHash)){
-            throw new AppException('SESSION_INACTIVE', null, 'Su sesión ha expirado por inactividad. Inicie sesión nuevamente.');
+        const isActive = await this.authRepository.hasActiveSession(
+            payload.sessionId,
+            payload.sub,
+            tokenHash
+        );
+        if (!isActive) {
+            throw new AppException('SESSION_INACTIVE');
         }
 
         const user = await this.userRepository.findUserById(payload.sub);
         
         if (!user || user.isDeleted) {
-            throw new AppException('USER_NOT_FOUND');
+            throw new AppException('SESSION_INACTIVE');
+        }
+
+        let sessionId = payload.sessionId;
+        let newRefreshToken = refreshToken;
+        if (expiresAt.getTime() - Date.now() <= AuthService.REFRESH_RENEWAL_THRESHOLD_MS) {
+            sessionId = randomUUID();
+            newRefreshToken = JwtManage.generateRefreshToken(user.id, user.email, sessionId);
+            const newExpiresAt = JwtManage.getExpiredAtFromToken(newRefreshToken);
+            if (!newExpiresAt) {
+                throw new AppException('JWT_REFRESH_EXPIRED');
+            }
+
+            await this.prisma.$transaction(async (tx) => {
+                const invalidated = await this.authRepository.invalidateSession(
+                    payload.sessionId,
+                    user.id,
+                    tx,
+                    tokenHash
+                );
+                if (!invalidated) {
+                    throw new AppException('SESSION_INACTIVE');
+                }
+
+                await this.authRepository.createSession({
+                    id: sessionId,
+                    userId: user.id,
+                    refreshTokenHash: await BcryptManage.hashTokenForBlacklist(newRefreshToken),
+                    expiresAt: newExpiresAt,
+                    ip: context.ip,
+                    userAgent: context.userAgent?.slice(0, 512),
+                }, tx);
+            });
         }
 
         const newAccessToken = JwtManage.generateAccessToken(
             user.id,
             user.email,
             user.profileImageUrl || '',
-            user.role.name
+            user.role.name,
+            sessionId
         );
-
-        let newRefreshToken:string = refreshToken;
-
-        if(DAYS_THRESHOLD >= daysToExpire){
-            newRefreshToken = JwtManage.generateRefreshToken(
-                user.id,
-                user.email
-            );
-
-            await this.prisma.$transaction(async (tx) => {
-                await this.authRepository.saveBlockToken(tokenHash, expiredRefreshToken, user.id, tx)
-            });
-        }
         
         LoggerManage.info('Tokens refreshed.', { userId: user.id });
 
@@ -340,6 +391,7 @@ export class AuthService {
 
         await this.prisma.$transaction(async (tx) => {
             await this.userRepository.changePassword(user.id, newPasswordHash, tx);
+            await this.authRepository.invalidateUserSessions(user.id, tx);
             await this.authRepository.saveBlockToken(
                 tokenHash,
                 JwtManage.getExpiredAtFromToken(token)!,
@@ -446,4 +498,3 @@ export class AuthService {
         return diasFaltantes;
     }
 }
-

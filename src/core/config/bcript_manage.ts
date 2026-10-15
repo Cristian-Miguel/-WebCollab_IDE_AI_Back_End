@@ -9,7 +9,8 @@ dotenv.config();
  * Encapsula la complejidad del proceso de encriptación para el módulo de autenticación.
  */
 export class BcryptManage {
-    private static readonly SECRET_ENCODE_DATA_KEY = process.env.SECRET_ENCODE_DATA_KEY as string || 'mi_secreto_fijo_y_largo';
+    private static readonly SECRET_ENCODE_DATA_KEY =
+        process.env.SECRET_ENCODE_DATA_KEY || process.env.JWT_SECRET || process.env.SECRET_KEY || '';
 
     // El número de rondas de salting (cost factor).
     // Un valor de 10 es un buen equilibrio entre seguridad y rendimiento para la mayoría de los casos.
@@ -21,6 +22,10 @@ export class BcryptManage {
      * @returns Una promesa que resuelve con el hash del token.
      */
     public static async hashTokenForBlacklist(token: string): Promise<string> {
+        if (!BcryptManage.SECRET_ENCODE_DATA_KEY) {
+            throw new Error('A token hashing secret must be configured.');
+        }
+
         return crypto
             .createHmac('sha256', BcryptManage.SECRET_ENCODE_DATA_KEY)
             .update(token)

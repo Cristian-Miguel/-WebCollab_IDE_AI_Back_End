@@ -1,7 +1,6 @@
 // src/core/exception/db_exception.ts
 
-import { PrismaClientInitializationError, PrismaClientKnownRequestError, PrismaClientRustPanicError, 
-    PrismaClientUnknownRequestError, PrismaClientValidationError } from '@prisma/client/runtime/library';
+import { Prisma } from '@prisma/client';
 import { ERROR_MESSAGES } from '../const/error_message';
 import { ErrorResponse } from '../model/error';
 import { IErrorMessage } from './app_exception';
@@ -19,15 +18,15 @@ export class DBException extends Error {
      * @param context Mensaje adicional para dar contexto al error.
      */
     constructor(
-        prismaError: PrismaClientKnownRequestError | PrismaClientValidationError | PrismaClientInitializationError
-        | PrismaClientRustPanicError | PrismaClientUnknownRequestError,
+        prismaError: Prisma.PrismaClientKnownRequestError | Prisma.PrismaClientValidationError | Prisma.PrismaClientInitializationError
+        | Prisma.PrismaClientRustPanicError | Prisma.PrismaClientUnknownRequestError,
         context?: string,
         customMessage?: string
     ) {
         let mappedError: IErrorMessage;
         const contextInfo = context ? ` Contexto: ${context}` : '';
 
-        if (prismaError instanceof PrismaClientKnownRequestError) {
+        if (prismaError instanceof Prisma.PrismaClientKnownRequestError) {
             const prismaCode = prismaError.code;
 
             switch (prismaError.code) {
@@ -75,7 +74,7 @@ export class DBException extends Error {
                     customMessage = `[DB ${prismaCode}] Error de DB Conocido no mapeado. ${contextInfo}`;
                     break;
             }
-        } else if(prismaError instanceof PrismaClientValidationError) {
+        } else if(prismaError instanceof Prisma.PrismaClientValidationError) {
             mappedError = ERROR_MESSAGES['DB_DATA_INVALID_FORMAT'];
             customMessage = `[Prisma Validation] Error de argumento en la consulta de Prisma. Revise los tipos y campos de entrada en el código de aplicación.`;
         } else {

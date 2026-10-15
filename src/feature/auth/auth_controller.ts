@@ -32,7 +32,10 @@ export class AuthController {
     public login = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
         const credentials: AuthLoginBody = req.body;
         
-        const loginData = await this.authService.login(credentials);
+        const loginData = await this.authService.login(credentials, {
+            ip: req.ip,
+            userAgent: req.get('user-agent'),
+        });
 
         res.cookie('refreshToken', loginData.refreshToken, this.COOKIE_OPTIONS);
         
@@ -50,7 +53,10 @@ export class AuthController {
      * Nota: Utiliza `req.file` de Multer, que debe ser adjuntado por un middleware anterior en la ruta.
      */
     public register = async (req: Request, res: Response): Promise<void> => {
-        const auth: AuthResponse = await this.authService.register(req.body, req.file);
+        const auth: AuthResponse = await this.authService.register(req.body, req.file, {
+            ip: req.ip,
+            userAgent: req.get('user-agent'),
+        });
 
         res.cookie('refreshToken', auth.refreshToken, this.COOKIE_OPTIONS);
 
@@ -73,7 +79,10 @@ export class AuthController {
             throw new AppException('TOKEN_REQUIRED');
         }
         
-        const newTokens = await this.authService.refreshAccessToken(refreshToken);
+        const newTokens = await this.authService.refreshAccessToken(refreshToken, {
+            ip: req.ip,
+            userAgent: req.get('user-agent'),
+        });
 
         res.cookie('refreshToken', newTokens.refreshToken, this.COOKIE_OPTIONS);
 
@@ -93,12 +102,11 @@ export class AuthController {
      * Requiere que el middleware de autenticación haya adjuntado el payload en `req.user`.
      */
     public logout = async (req: Request, res: Response): Promise<void> => {
-        const accessToken: string = req.headers.authorization?.split(' ')[1] || '';
-        const refreshToken: string = req.cookies.refreshToken;
-
-        if (refreshToken) {
-            await this.authService.logout(accessToken, refreshToken);
+        if (!req.user) {
+            throw new AppException('JWT_MISSING_PAYLOAD');
         }
+
+        await this.authService.logout(req.user.sessionId, req.user.sub);
 
         res.clearCookie('refreshToken', {
             httpOnly: true,
@@ -171,13 +179,15 @@ export class AuthController {
      * @description Valida el correo electrónico del usuario usando el token del link.
      */
     public resendValidateEmail = async (req: Request, res: Response): Promise<void> => {
-        const accessToken: string = req.body.token;
+        if (!req.user) {
+            throw new AppException('JWT_MISSING_PAYLOAD');
+        }
 
-        await this.authService.validateEmail(accessToken);
+        await this.authService.resendValidationEmail(req.user.email);
         
         const response = new SuccessResponse(
             null, 
-            SUCCESS_MESSAGES.EMAIL_VALIDATION_SUCCESS, 
+            SUCCESS_MESSAGES.OPERATION_SUCCESSFUL,
             SUCCESS_CODES.OK
         );
         

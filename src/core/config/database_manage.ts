@@ -1,3 +1,5 @@
+import 'dotenv/config';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 
 /**
@@ -10,20 +12,18 @@ export class DatabaseManage {
 
     // Constructor privado para evitar la instanciación directa
     private constructor() {
-        // Inicialización de Prisma Client
+        const connectionString = process.env.DATABASE_URL;
+        if (!connectionString) {
+            throw new Error('DATABASE_URL must be configured before initializing Prisma.');
+        }
+
         DatabaseManage.instance = new PrismaClient({
+            adapter: new PrismaPg({ connectionString }),
             log: [
-                { level: 'query', emit: 'event' },
-                { level: 'info', emit: 'stdout' },
                 { level: 'warn', emit: 'stdout' },
                 { level: 'error', emit: 'stdout' },
             ],
         });
-
-        // Configurar un listener para logs de consultas si es necesario (ej. para Winston)
-        // (DatabaseManage.instance as any).$on('query', (e: any) => {
-        //     console.log('Query: ' + e.query);
-        // });
     }
 
     /**

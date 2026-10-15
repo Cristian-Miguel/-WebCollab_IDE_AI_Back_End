@@ -1,103 +1,191 @@
-// Archivo de Esquema de Prisma
-// Se utiliza para definir el modelo de datos y la conexión a la base de datos.
+datasource db {
+  provider = "postgresql"
+}
 
-// Configuración del proveedor de base de datos
 generator client {
   provider = "prisma-client-js"
 }
-
-// Configuración de la fuente de datos (MySQL)
-datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
-}
-
-// =================================================================
-// MODELO DE ROLES
-// Requerimientos: customer, administrador, soporte. Eliminar rol (borrado lógico).
-// =================================================================
-
-model Role {
-  id          String    @id @default(uuid()) @db.VarChar(255)
-  name        ROLE_TYPE @unique
-  description String?   @db.VarChar(255)
-  isActive    Boolean   @db.Bit(1) @map("is_active")
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  users       User[]
-}
-
-// =================================================================
-// MODELO DE USUARIO
-// Incluye todos los campos de registro y seguridad.
-// =================================================================
-
-model User {
-  id              String    @id @default(uuid()) @db.VarChar(255)
-  email           String    @unique @db.VarChar(255)
-  password        String    @db.LongText
-  fullName        String    @db.VarChar(255)
-  rfc             String    @db.VarChar(14)
-  curp            String    @db.VarChar(18)
-  profileImageUrl String?   @map("profile_image_url") @db.LongText
-  roleId          String    @map("role_id")    @db.VarChar(255)
-  addressId       String    @map("address_id") @db.VarChar(255)
-  birthDate       DateTime  @map("birth_date") @db.Date
-  lockUntil       DateTime? @map("lock_until")
-  lastLogin       DateTime? @map("last_login")
-  lastLogout      DateTime? @map("last_logout")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  isEmailVerified Boolean   @db.Bit(1) @default(false) @map("is_email_verified")
-  isAccountLocked Boolean   @db.Bit(1) @default(false) @map("is_account_locked")
-  isDeleted       Boolean   @db.Bit(1) @default(false) @map("is_deleted")
-  loginAttempts   Int       @default(0) @map("login_attempts")
-  role            Role      @relation(fields: [roleId], references: [id])
-  address         Address   @relation(fields: [addressId], references: [id])
-  revokedTokens   RevokedToken[]
-  @@map("users")
-}
-
-// =================================================================
-// MODELO DE DIRECCIÓN
-// Se separa para normalizar y gestionar la dirección completa.
-// =================================================================
-
-model Address {
-    id              String    @id @default(uuid()) @db.VarChar(255)
-    street          String    @db.VarChar(255)
-    internalNumber  String?   @db.VarChar(255) @map("internal_number")
-    externalNumber  String    @db.VarChar(255) @map("external_number")
-    neighborhood    String    @db.VarChar(255)
-    locality        String    @db.VarChar(255)
-    municipality    String    @db.VarChar(255)
-    state           String    @db.VarChar(255)
-    zipCode         String    @db.VarChar(8) @map("zip_code")
-    country         String    @db.VarChar(100)
-    createdAt       DateTime  @default(now())
-    updatedAt       DateTime  @updatedAt
-    user            User[]
-    @@map("addresses")
-}
-
-// =================================================================
-// MODELO DE TOKENS REVOCADOS (Blacklist)
-// Requerimiento: Lista negra de tokens.
-// =================================================================
-
-model RevokedToken {
-    id          String    @id @default(uuid()) @db.VarChar(255)
-    tokenHash   String    @map("token_hash") @unique
-    expiresAt   DateTime  @map("expires_at")
-    createdAt   DateTime  @default(now())
-    userId      String    @db.VarChar(255)
-    user        User      @relation(fields: [userId], references: [id])
-    @@map("revoked_tokens")
-}
-
 
 enum ROLE_TYPE {
   ADMINISTRATOR
   CUSTOMER
   SUPPORT
+
+  @@map("ROLE_TYPE")
+}
+
+enum RolParticipante {
+  PROPIETARIO
+  COLABORADOR
+}
+
+enum EstadoSesion {
+  ACTIVA
+  ARCHIVADA
+  CERRADA
+}
+
+model Role {
+  id          String    @id @default(uuid()) @db.VarChar(255)
+  name        ROLE_TYPE @unique
+  description String?   @db.VarChar(255)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  users       User[]
+
+  @@map("Role")
+}
+
+model User {
+  id              String    @id @default(uuid()) @db.VarChar(255)
+  email           String    @unique @db.VarChar(255)
+  password        String    @map("password_hash") @db.Text
+  fullName        String    @map("nombre") @db.VarChar(255)
+  profileImageUrl String?   @map("profile_image_url") @db.Text
+  roleId          String    @map("role_id") @db.VarChar(255)
+  birthDate       DateTime  @map("birth_date") @db.Date
+  lockUntil       DateTime? @map("blocked_until")
+  lastLogin       DateTime? @map("last_login_at")
+  lastLogout      DateTime? @map("last_logout_at")
+  registeredAt    DateTime  @default(now()) @map("createdAt")
+  updatedAt       DateTime  @updatedAt
+  isEmailVerified Boolean   @default(false) @map("is_email_verified")
+  isAccountLocked Boolean   @default(false) @map("is_account_locked")
+  isDeleted       Boolean   @default(false) @map("is_deleted")
+  loginAttempts   Int       @default(0) @map("attempts_login")
+
+  role           Role                 @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  sessions       SesionColaborativa[] @relation("PropietarioSesion")
+  participations ParticipanteSesion[]
+  changeHistory  HistorialCambios[]
+  chatMessages   MensajeChat[]
+  aiSuggestions  SugerenciaIA[]
+  userSessions   SesionUsuario[]
+  revokedTokens  RevokedToken[]
+
+  @@index([isDeleted, email])
+  @@index([isAccountLocked, lockUntil])
+  @@map("users")
+}
+
+model SesionUsuario {
+  id               String   @id @default(uuid()) @db.VarChar(255)
+  refreshTokenHash String   @unique @map("refresh_token_hash") @db.VarChar(64)
+  ip               String?  @db.VarChar(45)
+  userAgent        String?  @map("user_agent") @db.VarChar(512)
+  isValid          Boolean  @default(true) @map("is_valid")
+  expiresAt        DateTime @map("expires_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  userId           String   @map("user_id") @db.VarChar(255)
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isValid])
+  @@index([expiresAt, isValid, updatedAt])
+  @@map("sesiones_usuario")
+}
+
+model RevokedToken {
+  id        String   @id @default(uuid()) @db.VarChar(255)
+  tokenHash String   @unique @map("token_hash") @db.Text
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now())
+  userId    String   @map("userId") @db.VarChar(255)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("revoked_tokens")
+}
+
+model SesionColaborativa {
+  id            String       @id @default(uuid()) @db.VarChar(255)
+  nombre        String       @db.VarChar(255)
+  descripcion   String?      @db.Text
+  propietarioId String       @map("propietario_id") @db.VarChar(255)
+  estado        EstadoSesion @default(ACTIVA)
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+
+  propietario      User                 @relation("PropietarioSesion", fields: [propietarioId], references: [id], onDelete: Cascade)
+  participantes    ParticipanteSesion[]
+  archivoProyecto  ArchivoProyecto?
+  historialCambios HistorialCambios[]
+  mensajesChat     MensajeChat[]
+  sugerenciasIA    SugerenciaIA[]
+
+  @@index([propietarioId, estado])
+  @@map("sesiones_colaborativas")
+}
+
+model ParticipanteSesion {
+  id        String          @id @default(uuid()) @db.VarChar(255)
+  usuarioId String          @map("usuario_id") @db.VarChar(255)
+  sesionId  String          @map("sesion_id") @db.VarChar(255)
+  rol       RolParticipante @default(COLABORADOR)
+  activo    Boolean         @default(true)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+
+  usuario User               @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  sesion  SesionColaborativa @relation(fields: [sesionId], references: [id], onDelete: Cascade)
+
+  @@unique([usuarioId, sesionId])
+  @@map("participantes_sesion")
+}
+
+model ArchivoProyecto {
+  id         String   @id @default(uuid()) @db.VarChar(255)
+  sesionId   String   @unique @map("sesion_id") @db.VarChar(255)
+  html       String   @default("") @db.Text
+  css        String   @default("") @db.Text
+  javascript String   @default("") @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  sesion SesionColaborativa @relation(fields: [sesionId], references: [id], onDelete: Cascade)
+
+  @@map("archivos_proyecto")
+}
+
+model HistorialCambios {
+  id            String   @id @default(uuid()) @db.VarChar(255)
+  usuarioId     String   @map("usuario_id") @db.VarChar(255)
+  sesionId      String   @map("sesion_id") @db.VarChar(255)
+  detalleCambio String   @map("detalle_cambio") @db.Text
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  usuario User               @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  sesion  SesionColaborativa @relation(fields: [sesionId], references: [id], onDelete: Cascade)
+
+  @@index([sesionId, createdAt])
+  @@map("historial_cambios")
+}
+
+model MensajeChat {
+  id        String   @id @default(uuid()) @db.VarChar(255)
+  usuarioId String   @map("usuario_id") @db.VarChar(255)
+  sesionId  String   @map("sesion_id") @db.VarChar(255)
+  contenido String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  usuario User               @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  sesion  SesionColaborativa @relation(fields: [sesionId], references: [id], onDelete: Cascade)
+
+  @@index([sesionId, createdAt])
+  @@map("mensajes_chat")
+}
+
+model SugerenciaIA {
+  id        String   @id @default(uuid()) @db.VarChar(255)
+  sesionId  String   @map("sesion_id") @db.VarChar(255)
+  usuarioId String   @map("usuario_id") @db.VarChar(255)
+  prompt    String   @db.Text
+  respuesta String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  sesion  SesionColaborativa @relation(fields: [sesionId], references: [id], onDelete: Cascade)
+  usuario User               @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@index([sesionId, createdAt])
+  @@map("sugerencias_ia")
 }

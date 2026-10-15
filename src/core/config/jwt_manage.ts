@@ -1,4 +1,4 @@
-import jwt, {JwtPayload, SignOptions} from 'jsonwebtoken'; //* as
+import jwt, { SignOptions } from 'jsonwebtoken';
 import { LoggerManage } from './logger';
 import * as dotenv from 'dotenv';
 
@@ -8,6 +8,7 @@ dotenv.config();
 // El 'iss' (issuer) y 'exp' (expiration) son campos estándar de JWT
 export interface AccessTokenPayload {
     sub: string;
+    sessionId: string;
     email: string;
     profileImageUrl: string;
     role: string;
@@ -18,6 +19,11 @@ export interface RefreshTokenPayload {
     sub: string;
     email: string;
     type: string;
+    sessionId?: string;
+}
+
+export interface SessionRefreshTokenPayload extends RefreshTokenPayload {
+    sessionId: string;
 }
 
 /**
@@ -27,9 +33,9 @@ export interface RefreshTokenPayload {
 export class JwtManage {
 
     // Claves secretas de entorno
-    private static readonly SECRET_KEY = process.env.SECRET_KEY as string;
+    private static readonly SECRET_KEY = process.env.JWT_SECRET || process.env.SECRET_KEY || '';
 
-    private static readonly ACCESS_EXPIRATION = process.env.JWT_ACCESS_EXPIRATION || '20m';
+    private static readonly ACCESS_EXPIRATION = process.env.JWT_ACCESS_EXPIRATION || '1h';
     private static readonly REFRESH_EXPIRATION = process.env.JWT_REFRESH_EXPIRATION || '30d'; 
     private static readonly ISSUER = 'YourAPI/v1'; // Identificador del emisor (issuer)
     private static readonly AUDIENCE = 'myapp-client'; // Identificador del cliente (audience)
@@ -64,11 +70,13 @@ export class JwtManage {
         userUuid: string,
         email: string,
         profileImageUrl: string,
-        role: string
+        role: string,
+        sessionId: string
     ): string {
         JwtManage.validateSecrets();
         const payload: AccessTokenPayload = {
             sub: userUuid,
+            sessionId,
             email: email,
             profileImageUrl: profileImageUrl,
             role: role,
@@ -93,12 +101,13 @@ export class JwtManage {
      * @param email Correo del usuario.
      * @returns El token de refresco firmado.
      */
-    public static generateRefreshToken(userUuid: string, email: string): string {
+    public static generateRefreshToken(userUuid: string, email: string, sessionId: string): string {
         JwtManage.validateSecrets();
         const payload: RefreshTokenPayload = {
             sub: userUuid,
             email: email,
-            type: JwtManage.SCOPE_REFRESH_TOKEN
+            type: JwtManage.SCOPE_REFRESH_TOKEN,
+            sessionId,
         };
 
         const options: SignOptions = {
@@ -185,11 +194,14 @@ export class JwtManage {
             const decoded = jwt.verify(
                 token, 
                 JwtManage.SECRET_KEY,
-                { audience: JwtManage.AUDIENCE, issuer: JwtManage.ISSUER }
+                { audience: JwtManage.AUDIENCE, issuer: JwtManage.ISSUER, algorithms: ['HS256'] }
             ) as AccessTokenPayload;
 
             if (decoded.type !== JwtManage.SCOPE_ACCESS_TOKEN) {
                 throw new Error('Invalid token type.');
+            }
+            if (typeof decoded.sessionId !== 'string' || !decoded.sessionId) {
+                throw new Error('Access token is not associated with a session.');
             }
 
             return decoded;
@@ -209,14 +221,17 @@ export class JwtManage {
      * @param token Token de refresco a verificar.
      * @returns El payload decodificado si es válido.
      */
-    public static verifyRefreshToken(token: string): RefreshTokenPayload {
+    public static verifyRefreshToken(token: string): SessionRefreshTokenPayload {
         try {
             JwtManage.validateSecrets();
             const decoded = jwt.verify(token, JwtManage.SECRET_KEY,
-                { audience: JwtManage.AUDIENCE, issuer: JwtManage.ISSUER }
-            ) as RefreshTokenPayload;
+                { audience: JwtManage.AUDIENCE, issuer: JwtManage.ISSUER, algorithms: ['HS256'] }
+            ) as SessionRefreshTokenPayload;
             if (decoded.type !== JwtManage.SCOPE_REFRESH_TOKEN) {
                 throw new Error('Invalid token type.');
+            }
+            if (typeof decoded.sessionId !== 'string' || !decoded.sessionId) {
+                throw new Error('Refresh token is not associated with a session.');
             }
             return decoded;
         } catch (error) {
@@ -234,7 +249,7 @@ export class JwtManage {
         try {
             JwtManage.validateSecrets();
             const decoded = jwt.verify(token, JwtManage.SECRET_KEY,
-                { audience: JwtManage.AUDIENCE, issuer: JwtManage.ISSUER }
+                { audience: JwtManage.AUDIENCE, issuer: JwtManage.ISSUER, algorithms: ['HS256'] }
             ) as RefreshTokenPayload;
             if (decoded.type !== JwtManage.SCOPE_VALIDATE_EMAIL) {
                 throw new Error('Invalid token type.');
@@ -255,7 +270,7 @@ export class JwtManage {
         try {
             JwtManage.validateSecrets();
             const decoded = jwt.verify(token, JwtManage.SECRET_KEY,
-                { audience: JwtManage.AUDIENCE, issuer: JwtManage.ISSUER }
+                { audience: JwtManage.AUDIENCE, issuer: JwtManage.ISSUER, algorithms: ['HS256'] }
             ) as RefreshTokenPayload;
             if (decoded.type !== JwtManage.SCOPE_CHANGE_PASSWORD) {
                 throw new Error('Invalid token type.');
@@ -268,16 +283,15 @@ export class JwtManage {
     }
 
     public static getExpiredAtFromToken(token: string): Date | undefined {
-        const decoded = jwt.decode(token) as JwtPayload;
+        const decoded = jwt.decode(token);
+        if (!decoded || typeof decoded === 'string') {
+            return undefined;
+        }
         return decoded.exp ? new Date(decoded.exp * 1000) : undefined;
     }
 
     public static isTokenExpired(token: string): boolean {
-        const decoded = jwt.decode(token) as JwtPayload;
-        if (decoded.exp) {
-            const currentTime = Math.floor(Date.now() / 1000);
-            return decoded.exp < currentTime;
-        }
-        return false;
+        const expiresAt = JwtManage.getExpiredAtFromToken(token);
+        return !expiresAt || expiresAt.getTime() <= Date.now();
     }
 }

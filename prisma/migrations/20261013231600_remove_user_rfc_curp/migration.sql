@@ -1,0 +1,2 @@
+ALTER TABLE "users" DROP COLUMN "rfc";
+ALTER TABLE "users" DROP COLUMN "curp";

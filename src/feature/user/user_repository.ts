@@ -1,7 +1,6 @@
 import { PrismaClient, User, RevokedToken, Role, ROLE_TYPE, Prisma } from '@prisma/client';
 import { DatabaseManage } from '../../core/config/database_manage';
 import { DBException } from '../../core/exception/db_exception';
-import { PrismaClientInitializationError, PrismaClientKnownRequestError, PrismaClientRustPanicError, PrismaClientUnknownRequestError, PrismaClientValidationError } from '@prisma/client/runtime/library';
 import { UserDomain } from './user_model';
 
 /**
@@ -29,7 +28,7 @@ export class UserRepository {
             });
             return user;
         } catch (error) {
-            if (error instanceof PrismaClientKnownRequestError) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, `Error buscando usuario por email: ${email}`);
             }
             throw error;
@@ -49,7 +48,7 @@ export class UserRepository {
             });
             return user;
         } catch (error) {
-             if (error instanceof PrismaClientKnownRequestError) {
+             if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, `Error buscando usuario por ID: ${userId}`);
             }
             throw error;
@@ -74,7 +73,7 @@ export class UserRepository {
                 where: { name: role },
             });
         } catch (error) {
-            if (error instanceof PrismaClientKnownRequestError) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, `Error buscando rol: ${name}`);
             }
             throw error;
@@ -82,21 +81,18 @@ export class UserRepository {
     }
 
     /**
-     * @description Crea un nuevo usuario y su registro de dirección asociado.
+     * @description Crea un nuevo usuario.
      * @param data Datos del nuevo usuario.
      * @param passwordHash El hash de la contraseña (ya encriptado).
      * @param defaultRoleId El ID del rol por defecto ('customer').
      */
     public async createUser(userDomain: UserDomain, tx: Prisma.TransactionClient): Promise<User> {
-        // const { address, ...userData } = userDomain;
         try {
             const result: User = await tx.user.create({
                 data: {
                     email: userDomain.email,
                     password: userDomain.password,
                     fullName: userDomain.fullName,
-                    rfc: userDomain.rfc,
-                    curp: userDomain.curp,
                     birthDate: userDomain.birthDate,
                     profileImageUrl: userDomain.profileImageUrl,
                     isEmailVerified: false,
@@ -107,18 +103,17 @@ export class UserRepository {
                     lastLogout: null,
                     isDeleted: false,
                     roleId: userDomain.roleId,
-                    addressId: userDomain.addressId,
                 },
             });
 
             return result;
         } catch (error) {
-            if (error instanceof PrismaClientKnownRequestError) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, `Error al crear el usuario: ${userDomain.email}`);
-            } else if (error instanceof PrismaClientValidationError) {
+            } else if (error instanceof Prisma.PrismaClientValidationError) {
                 throw new DBException(error, `Error al validar los datos: ${userDomain.email}`);
-            } else if(error instanceof PrismaClientInitializationError || error instanceof PrismaClientRustPanicError ||
-                error instanceof PrismaClientUnknownRequestError
+            } else if(error instanceof Prisma.PrismaClientInitializationError || error instanceof Prisma.PrismaClientRustPanicError ||
+                error instanceof Prisma.PrismaClientUnknownRequestError
             ) {
                  throw new DBException(error, `Error desconocido al crear un: ${userDomain.email}`);
             }
@@ -151,15 +146,13 @@ export class UserRepository {
                     email: userData.email,
                     fullName: userData.fullName,
                     roleId: rolId!.id,
-                    rfc: userData.rfc,
-                    curp: userData.curp
                 },
-                include: { role: true, address: true }
+                include: { role: true }
             });
 
             return user;
         } catch (error) {
-            if (error instanceof PrismaClientKnownRequestError) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, `Error al crear el usuario: ${userData.email}`);
             }
             throw error;
@@ -182,7 +175,7 @@ export class UserRepository {
                 },
             });
         } catch (error) {
-            if (error instanceof PrismaClientKnownRequestError) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, `Error actualizando el último login del usuario: ${userId}`);
             }
             throw error;
@@ -208,7 +201,7 @@ export class UserRepository {
                 },
             });
         } catch (error) {
-            if (error instanceof PrismaClientKnownRequestError) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, `Error actualizando intentos de login para: ${userId}`);
             }
             throw error;
@@ -228,7 +221,7 @@ export class UserRepository {
                 },
             });
         } catch (error) {
-             if (error instanceof PrismaClientKnownRequestError) {
+             if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, `Error registrando la salida de sesión para: ${userId}`);
             }
             throw error;
@@ -253,7 +246,7 @@ export class UserRepository {
                 },
             });
         } catch (error) {
-            if (error instanceof PrismaClientKnownRequestError) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, `Error al cambiar la contraseña del usuario: ${userId}`);
             }
             throw error;
@@ -273,7 +266,7 @@ export class UserRepository {
                 },
             });
         } catch (error) {
-            if (error instanceof PrismaClientKnownRequestError) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, `Error al validar el correo del usuario: ${userId}`);
             }
             throw error;
@@ -298,7 +291,7 @@ export class UserRepository {
             ]);
             return [data, total]
         } catch(error) {
-            if (error instanceof PrismaClientKnownRequestError) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, `Error al paginar usuarios.`);
             }
             throw error;
@@ -319,8 +312,6 @@ export class UserRepository {
                     fullName:'Delete',
                     email: userId,
                     password: 'Delete',
-                    rfc: userId,
-                    curp: userId,
                     birthDate: '1900/01/01',
                     isAccountLocked: true,
                     isDeleted: true,
@@ -328,7 +319,7 @@ export class UserRepository {
             });
             return userId;
         } catch (error) {
-            if (error instanceof PrismaClientKnownRequestError) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError) {
                 throw new DBException(error, `Error al paginar usuarios.`);
             }
             throw error; 

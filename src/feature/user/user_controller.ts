@@ -8,6 +8,7 @@ import { uploadMiddleware } from '../../core/config/multer_manage'; // Importar 
 import { UserApi } from './user_model';
 import { User } from '@prisma/client';
 import { Filter, Paginate } from '../../core/config/filter_order_adapter';
+import { AppException } from '../../core/exception/app_exception';
 
 /**
  * @description Controlador para manejar las peticiones HTTP relacionadas con la autenticación.
@@ -46,7 +47,10 @@ export class UserController {
 
     public getUserByUuid = async (req: Request, res: Response): Promise<void> => {
         const accessToken = req.headers.authorization?.split(' ')[1] || '';
-        const { uuid } = req.params;
+        const uuid = req.params.uuid;
+        if (typeof uuid !== 'string') {
+            throw new AppException('INVALID_FORMAT');
+        }
         const response: SuccessResponse<UserApi> = await this.userService.getUserById(uuid, accessToken);
 
         res.status(response.httpCode).json(response);
@@ -54,7 +58,10 @@ export class UserController {
 
     public deleteUser = async (req: Request, res: Response): Promise<void> => {
         const accessToken = req.headers.authorization?.split(' ')[1] || '';
-        const { uuid } = req.params;
+        const uuid = req.params.uuid;
+        if (typeof uuid !== 'string') {
+            throw new AppException('INVALID_FORMAT');
+        }
 
         const uuidDelete:string = await this.userService.deleteUser(uuid, accessToken);
 

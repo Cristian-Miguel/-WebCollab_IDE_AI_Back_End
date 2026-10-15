@@ -158,25 +158,10 @@ export const ERROR_MESSAGES = {
         appCode: 'E3008',
         message: 'El usuario con los datos proporcionados ya existe.',
     },
-    ADDRESS_CREATION_FAILED: {
-        httpCode: ERROR_CODES.INTERNAL_SERVER_ERROR,
-        appCode: 'E3009',
-        message: 'No se pudo crear la dirección proporcionada.',
-    },
-    ADDRESS_UPDATE_FAILED: {
-        httpCode: ERROR_CODES.INTERNAL_SERVER_ERROR,
-        appCode: 'E3010',
-        message: 'No se pudo actualizar la dirección proporcionada.',
-    },
     PASSWORD_REQUIRED: {
         httpCode: ERROR_CODES.BAD_REQUEST,
         appCode: 'E3011',
         message: 'La contraseña es obligatoria para el registro.',
-    },
-    ADDRESS_NOT_FOUND: {
-        httpCode: ERROR_CODES.NOT_FOUND,
-        appCode: 'E3012',
-        message: 'La dirección especificada no existe.',
     },
     ROLE_NOT_FOUND: {
         httpCode: ERROR_CODES.NOT_FOUND,

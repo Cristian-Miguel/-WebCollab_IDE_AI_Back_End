@@ -8,7 +8,6 @@ const prisma = DatabaseManage.getInstance();
 const cleanDatabase = async () => {
     await prisma.revokedToken.deleteMany();
     await prisma.user.deleteMany();
-    await prisma.address.deleteMany();
 };
 
 describe('Auth Endpoints Integration Tests', () => {
@@ -31,22 +30,9 @@ describe('Auth Endpoints Integration Tests', () => {
         email: 'testuser@example.com',
         password: 'Password123!',
         fullName: 'Test User',
-        rfc: 'XAXX010101000',
-        curp: 'XAXX010101HXXXXX00',
         birthDate: "1988-05-03T00:00:00.000Z",
         role: {
             name: "CUSTOMER"
-        },
-        address: {
-            street: "{{$randomStreetName}}",
-            internalNumber: "{{$randomInt}}",
-            externalNumber: "{{$randomInt}}", 
-            neighborhood: "{{$randomStreetAddress}}",
-            locality: "{{$randomCity}}",
-            municipality: "{{$randomCity}}",
-            state: "{{$randomState}}",
-            zipCode: "{{$randomInt}}",
-            country: "{{$randomCountry}}"
         }
     };
 

@@ -33,7 +33,6 @@ ENV PORT=3000
 
 RUN apk add --no-cache openssl libc6-compat
 
-
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 COPY --from=builder --chown=appuser:appgroup /app/package.json ./package.json

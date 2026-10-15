@@ -1,4 +1,4 @@
-import { PrismaClient, Role, Address, User, ROLE_TYPE, Prisma } from "@prisma/client";
+import { PrismaClient, Role, User, ROLE_TYPE, Prisma } from "@prisma/client";
 import { DatabaseManage } from '../src/core/config/database_manage'
 import { faker } from '@faker-js/faker/locale/es_MX';
 import { BcryptManage } from '../src/core/config/bcript_manage';
@@ -17,11 +17,11 @@ async function main() {
             return map;
         }, {} as Record<ROLE_TYPE, Role>);
 
-        // 2. Crear un Administrador y su Dirección
+        // 2. Crear un Administrador
         await createSingleUser(tx, roleMap[ROLE_TYPE.ADMINISTRATOR], 'admin@example.com', 'Admin User');
         console.log('✅ Usuario Administrador creado.');
 
-        // 3. Crear múltiples Clientes y Direcciones (ej. 20)
+        // 3. Crear múltiples Clientes (ej. 20)
         await createBulkUsers(tx, roleMap[ROLE_TYPE.CUSTOMER], 20);
         console.log('✅ Usuarios Customer creados.');
 
@@ -57,44 +57,19 @@ async function createRoles(tx: Prisma.TransactionClient): Promise<Role[]>{
     return savedRoles;
 }
 
-function generateFakeAddress(): Omit<Address, 'id' | 'createdAt' | 'updatedAt' | 'user'> {
-    const state = faker.location.state();
-    const city = faker.location.city();
-
-    return {
-        street: faker.location.street(),
-        internalNumber: faker.string.numeric(3),
-        externalNumber: faker.string.numeric(4),
-        neighborhood: faker.location.county(),
-        locality: city,
-        municipality: city,
-        state: state,
-        zipCode: faker.location.zipCode('#####'), 
-        country: 'México',
-    };
-}
-
-async function generateFakeUser(roleId: string, addressId: string, email?: string, fullName?: string): Promise<Omit<User, 'id' | 'createdAt' | 'updatedAt' | 'lockUntil' | 'lastLogin' | 'lastLogout'>> {
+async function generateFakeUser(roleId: string, email?: string, fullName?: string): Promise<Omit<User, 'id' | 'registeredAt' | 'updatedAt' | 'lockUntil' | 'lastLogin' | 'lastLogout'>> {
     const plainPassword = 'password123';
     const hashedPassword = await BcryptManage.hashPassword(plainPassword);
     const firstName = faker.person.firstName();
     const lastName = faker.person.lastName();
     const userFullName = fullName || `${firstName} ${lastName}`;
 
-    // Generar CURP (ejemplo simplificado, no validado)
-    const birthYear = faker.number.int({ min: 1970, max: 2000 }).toString().slice(2, 4);
-    const curpBase = `${userFullName.substring(0, 4).toUpperCase()}${birthYear}${faker.date.anytime().toISOString().substring(5, 10).replace(/-/g, '')}`;
-
     return {
         email: email || faker.internet.email({ firstName, lastName }),
         password: hashedPassword,
         fullName: userFullName,
-        // RFC es complejo de generar con precisión, usamos un placeholder basado en el nombre
-        rfc: `${lastName.substring(0, 4).toUpperCase()}${birthYear}${faker.string.alphanumeric(6).toUpperCase()}`, 
-        curp: `${curpBase}${faker.string.alphanumeric(4).toUpperCase()}`,
         profileImageUrl: faker.image.avatar(),
         roleId: roleId,
-        addressId: addressId,
         birthDate: faker.date.birthdate({ min: 18, max: 65, mode: 'age' }),
         isEmailVerified: true,
         isAccountLocked: false,
@@ -104,17 +79,13 @@ async function generateFakeUser(roleId: string, addressId: string, email?: strin
 }
 
 async function createSingleUser(tx: Prisma.TransactionClient, role: Role, email: string, fullName: string) {
-    const addressData = generateFakeAddress();
-    const address = await tx.address.create({ data: addressData });
-    const userData = await generateFakeUser(role.id, address.id, email, fullName);
+    const userData = await generateFakeUser(role.id, email, fullName);
     await tx.user.create({ data: userData });
 }
 
 async function createBulkUsers(tx: Prisma.TransactionClient, role: Role, count: number) {
     for (let i = 0; i < count; i++) {
-        const addressData = generateFakeAddress();
-        const address = await tx.address.create({ data: addressData });
-        const userData = await generateFakeUser(role.id, address.id);
+        const userData = await generateFakeUser(role.id);
         await tx.user.create({ data: userData });
     }
 }

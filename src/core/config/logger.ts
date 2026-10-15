@@ -10,7 +10,7 @@ const combinedLogPath = path.join(process.cwd(), 'logs', 'combined.log');
 
 // src/core/config/log_sanitizer.ts (Crea este nuevo archivo)
 
-const sensitiveKeys = ['password', 'refreshToken', 'accessToken', 'curp', 'rfc'];
+const sensitiveKeys = ['password', 'refreshToken', 'accessToken'];
 const MASK = '[REDACTED]';
 
 /**

@@ -83,5 +83,10 @@ export const SUCCESS_MESSAGES = {
         code: 'S2002',
         message: 'Rol eliminado lógicamente con éxito.',
     },
-    
+
+    // Sesiones Colaborativas
+    SESSION_CREATED: {
+        code: 'S3000',
+        message: 'Sesión colaborativa creada exitosamente.',
+    },
 } as const;
