@@ -8,6 +8,7 @@ export const ERROR_CODES = {
     UNAUTHORIZED: 401,          // Autenticación fallida (Credenciales o Token)
     FORBIDDEN: 403,             // Acceso denegado (Permisos/Roles insuficientes)
     NOT_FOUND: 404,             // Recurso no encontrado
+    TOO_MANY_REQUESTS: 429,     // Límite de peticiones excedido (Rate Limiting)
     INTERNAL_SERVER_ERROR: 500, // Error interno de la aplicación
     SERVICE_UNAVAILABLE: 503,   // Servicio temporalmente no disponible
 } as const;
@@ -187,5 +188,15 @@ export const ERROR_MESSAGES = {
         httpCode: ERROR_CODES.FORBIDDEN,
         appCode: 'E3020',
         message: 'La sesión colaborativa ha alcanzado el límite máximo de 4 usuarios activos.',
+    },
+    AI_RATE_LIMIT_EXCEEDED: {
+        httpCode: ERROR_CODES.TOO_MANY_REQUESTS,
+        appCode: 'E4001',
+        message: 'Has excedido el límite de peticiones a la Inteligencia Artificial. Intenta nuevamente en un minuto.',
+    },
+    AI_SERVICE_ERROR: {
+        httpCode: ERROR_CODES.INTERNAL_SERVER_ERROR,
+        appCode: 'E4002',
+        message: 'Error al procesar la sugerencia con el servicio de Inteligencia Artificial.',
     },
 } as const;

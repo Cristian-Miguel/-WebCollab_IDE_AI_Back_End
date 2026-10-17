@@ -16,6 +16,7 @@ jest.mock('../src/core/config/mail_sender', () => ({
 const prisma = DatabaseManage.getInstance();
 
 const cleanDatabase = async () => {
+    await prisma.sugerenciaIA.deleteMany();
     await prisma.archivoProyecto.deleteMany();
     await prisma.participanteSesion.deleteMany();
     await prisma.sesionColaborativa.deleteMany();
@@ -45,7 +46,7 @@ const registerTestUser = async (email: string, fullName: string) => {
     };
 };
 
-describe('HU-04, HU-06-08 & HU-12-14: Session, Limit & Real-Time Yjs Sync Integration Tests', () => {
+describe('HU-04, HU-06-08, HU-12-14 & HU-16: Session, Limit, Yjs Sync & AI Assistant Integration Tests', () => {
     let authToken: string;
     let userId: string;
 
@@ -335,7 +336,6 @@ describe('HU-04, HU-06-08 & HU-12-14: Session, Limit & Real-Time Yjs Sync Integr
             expect(validUpgradeCode).toBe(101);
             expect(upgradeLatencyMs).toBeLessThan(200);
 
-            // Verificar inicialización y sincronización CRDT (< 200ms) con EditorService y RedisPresenceManage
             const editorService = new EditorService();
             const doc1 = new Y.Doc();
             const doc2 = new Y.Doc();
@@ -349,11 +349,63 @@ describe('HU-04, HU-06-08 & HU-12-14: Session, Limit & Real-Time Yjs Sync Integr
             expect(syncLatency).toBeLessThan(200);
             expect(doc2.getText('index.html').toString()).toContain('<!DOCTYPE html>');
 
-            // Verificar claves de presencia RedisPresenceManage
             expect(RedisPresenceManage.getPresenceKey(sessionId)).toBe(`session:${sessionId}:active_users`);
             expect(RedisPresenceManage.sadd(sessionId, userId)).toBe(1);
             expect(RedisPresenceManage.scard(sessionId)).toBe(1);
             expect(RedisPresenceManage.srem(sessionId, userId)).toBe(0);
+        });
+
+        describe('HU-16: Sugerencias de Código mediante IA (POST /api/v1/ai/suggest)', () => {
+            it('POST /api/v1/ai/suggest - Should fail with 401 Unauthorized without JWT', async () => {
+                const res = await request(app)
+                    .post('/api/v1/ai/suggest')
+                    .send({
+                        contextoCodigo: '<h1>Hola</h1>',
+                        lenguaje: 'html',
+                    });
+
+                expect(res.status).toBe(401);
+            });
+
+            it('POST /api/v1/ai/suggest - Should fail with 400 Bad Request for invalid lenguaje', async () => {
+                const res = await request(app)
+                    .post('/api/v1/ai/suggest')
+                    .set('Authorization', `Bearer ${authToken}`)
+                    .send({
+                        contextoCodigo: 'print("hello")',
+                        lenguaje: 'python',
+                    });
+
+                expect(res.status).toBe(400);
+            });
+
+            it('POST /api/v1/ai/suggest - Should generate suggestion, persist in SugerenciaIA, and return 200 OK', async () => {
+                const res = await request(app)
+                    .post('/api/v1/ai/suggest')
+                    .set('Authorization', `Bearer ${authToken}`)
+                    .send({
+                        contextoCodigo: '<main><h1>Título</h1></main>',
+                        lenguaje: 'html',
+                        promptUsuario: 'Agrega una sección semántica debajo del título',
+                        sesionId: sessionId,
+                    });
+
+                expect(res.status).toBe(200);
+                expect(res.body).toHaveProperty('data');
+                expect(res.body.data).toHaveProperty('id');
+                expect(res.body.data.sesionId).toBe(sessionId);
+                expect(res.body.data.usuarioId).toBe(userId);
+                expect(res.body.data.respuesta).toContain('ai-suggested-section');
+                expect(res.body.data.sugerencia).toContain('ai-suggested-section');
+
+                const savedInDb = await prisma.sugerenciaIA.findUnique({
+                    where: { id: res.body.data.id },
+                });
+                expect(savedInDb).toBeDefined();
+                expect(savedInDb?.sesionId).toBe(sessionId);
+                expect(savedInDb?.usuarioId).toBe(userId);
+                expect(savedInDb?.prompt).toContain('Agrega una sección semántica debajo del título');
+            });
         });
     });
 });

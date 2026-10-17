@@ -12,6 +12,7 @@ import { SessionPresenceSocket } from './modules/session/session.presence.socket
 import { EditorYjsSocket } from './modules/editor/editor.yjs.socket';
 import AuthRoutes from './feature/auth/auth_routes';
 import SessionRoutes from './modules/session/session.routes';
+import AIRoutes from './modules/ai-assistant/ai.routes';
 import { exceptionManage } from './core/exception/exception_manage';
 import UserRoutes from './feature/user/user_routes';
 import cookieParser from 'cookie-parser';
@@ -89,6 +90,7 @@ export class Server {
             auth: `${this.mainRoute}/auth`,
             user: `${this.mainRoute}/user`,
             sessions: `${this.mainRoute}/sessions`,
+            ai: `${this.mainRoute}/ai`,
         };
     }
 
@@ -99,6 +101,7 @@ export class Server {
         this.app.use(this.routesSrc.auth, AuthRoutes);
         this.app.use(this.routesSrc.user, UserRoutes);
         this.app.use(this.routesSrc.sessions, SessionRoutes);
+        this.app.use(this.routesSrc.ai, AIRoutes);
 
         this.app.get('/', (req, res) => {
             res.status(200).json({

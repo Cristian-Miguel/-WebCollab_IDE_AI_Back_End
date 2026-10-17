@@ -93,4 +93,10 @@ export const SUCCESS_MESSAGES = {
         code: 'S3001',
         message: 'Te has unido a la sesión colaborativa exitosamente.',
     },
+
+    // Asistencia mediante Inteligencia Artificial (HU-16)
+    AI_SUGGESTION_GENERATED: {
+        code: 'S4000',
+        message: 'Sugerencia de código generada exitosamente.',
+    },
 } as const;
