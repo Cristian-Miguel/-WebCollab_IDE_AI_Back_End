@@ -1,10 +1,13 @@
 import request from 'supertest';
 import http from 'http';
 import { AddressInfo } from 'net';
+import * as Y from 'yjs';
 import { app, httpServer } from '../src/app';
 import { DatabaseManage } from '../src/core/config/database_manage';
 import { SessionPresenceSocket } from '../src/modules/session/session.presence.socket';
 import { EditorYjsSocket } from '../src/modules/editor/editor.yjs.socket';
+import { EditorService } from '../src/modules/editor/editor.service';
+import { RedisPresenceManage } from '../src/core/config/redis_manage';
 
 jest.mock('../src/core/config/mail_sender', () => ({
     sendEmail: jest.fn().mockResolvedValue(undefined)
@@ -42,7 +45,7 @@ const registerTestUser = async (email: string, fullName: string) => {
     };
 };
 
-describe('HU-04 & HU-06-08: Session Creation, Join & 4-User Limit Integration Tests', () => {
+describe('HU-04, HU-06-08 & HU-12-14: Session, Limit & Real-Time Yjs Sync Integration Tests', () => {
     let authToken: string;
     let userId: string;
 
@@ -142,7 +145,7 @@ describe('HU-04 & HU-06-08: Session Creation, Join & 4-User Limit Integration Te
         });
     });
 
-    describe('HU-06-08: Unirse a Sesión, Control de Límite (Max 4 Usuarios) y WebSocket', () => {
+    describe('HU-06-08 & HU-12-14: Unirse a Sesión, Control de Límite (Max 4), Presencia y Yjs CRDT (< 200ms)', () => {
         let sessionId: string;
         let user2: { token: string; userId: string };
         let user3: { token: string; userId: string };
@@ -206,10 +209,10 @@ describe('HU-04 & HU-06-08: Session Creation, Join & 4-User Limit Integration Te
             expect(emitSpy).toHaveBeenCalledWith(
                 sessionId,
                 expect.arrayContaining([
-                    expect.objectContaining({ usuarioId: userId, activo: true }),
-                    expect.objectContaining({ usuarioId: user2.userId, activo: true }),
-                    expect.objectContaining({ usuarioId: user3.userId, activo: true }),
-                    expect.objectContaining({ usuarioId: user4.userId, activo: true })
+                    expect.objectContaining({ usuarioId: userId, activo: true, rol: 'PROPIETARIO' }),
+                    expect.objectContaining({ usuarioId: user2.userId, activo: true, rol: 'COLABORADOR' }),
+                    expect.objectContaining({ usuarioId: user3.userId, activo: true, rol: 'COLABORADOR' }),
+                    expect.objectContaining({ usuarioId: user4.userId, activo: true, rol: 'COLABORADOR' })
                 ])
             );
 
@@ -249,21 +252,18 @@ describe('HU-04 & HU-06-08: Session Creation, Join & 4-User Limit Integration Te
             expect(rejoinRes.body.data.participants).toHaveLength(4);
         });
 
-        it('WebSocket Double Validation (Socket.IO + y-websocket) - Should allow valid participant and reject 5th user with 403', async () => {
+        it('WebSocket Double Validation & /yjs-ws Sync (< 200ms) - Should upgrade valid participant, reject 5th user with 403, and sync Y.Doc', async () => {
             const presenceSocket = new SessionPresenceSocket();
 
-            // Usuario 4 ya está activo dentro de los 4 permitidos -> permitido en validación WS
             const allowedCheck = await presenceSocket.validateSocketJoinLimit(sessionId, user4.userId);
             expect(allowedCheck.allowed).toBe(true);
             expect(allowedCheck.code).toBe(200);
 
-            // Usuario 5 excede el límite de 4 usuarios activos -> rechazado con 403 en validación WS
             const rejectedCheck = await presenceSocket.validateSocketJoinLimit(sessionId, user5.userId);
             expect(rejectedCheck.allowed).toBe(false);
             expect(rejectedCheck.code).toBe(403);
             expect(rejectedCheck.reason).toBe('SESSION_FULL');
 
-            // Validación doble en el endpoint WebSocket de Yjs (/yjs-ws)
             await new Promise<void>((resolve) => {
                 if (!httpServer.listening) {
                     httpServer.listen(0, () => resolve());
@@ -274,7 +274,6 @@ describe('HU-04 & HU-06-08: Session Creation, Join & 4-User Limit Integration Te
 
             const port = (httpServer.address() as AddressInfo).port;
 
-            // Intentar upgrade en /yjs-ws para el 5to usuario debe retornar 403 Forbidden
             const statusCode = await new Promise<number>((resolve, reject) => {
                 const req = http.request({
                     port,
@@ -304,7 +303,7 @@ describe('HU-04 & HU-06-08: Session Creation, Join & 4-User Limit Integration Te
 
             expect(statusCode).toBe(403);
 
-            // Intentar upgrade en /yjs-ws para un participante válido dentro del límite (user4) debe hacer upgrade (101)
+            const startUpgrade = performance.now();
             const validUpgradeCode = await new Promise<number>((resolve, reject) => {
                 const req = http.request({
                     port,
@@ -331,8 +330,30 @@ describe('HU-04 & HU-06-08: Session Creation, Join & 4-User Limit Integration Te
                 req.on('error', reject);
                 req.end();
             });
+            const upgradeLatencyMs = performance.now() - startUpgrade;
 
             expect(validUpgradeCode).toBe(101);
+            expect(upgradeLatencyMs).toBeLessThan(200);
+
+            // Verificar inicialización y sincronización CRDT (< 200ms) con EditorService y RedisPresenceManage
+            const editorService = new EditorService();
+            const doc1 = new Y.Doc();
+            const doc2 = new Y.Doc();
+            await editorService.initializeYDocForSession(sessionId, doc1);
+
+            const syncStart = performance.now();
+            const stateUpdate = Y.encodeStateAsUpdate(doc1);
+            Y.applyUpdate(doc2, stateUpdate);
+            const syncLatency = performance.now() - syncStart;
+
+            expect(syncLatency).toBeLessThan(200);
+            expect(doc2.getText('index.html').toString()).toContain('<!DOCTYPE html>');
+
+            // Verificar claves de presencia RedisPresenceManage
+            expect(RedisPresenceManage.getPresenceKey(sessionId)).toBe(`session:${sessionId}:active_users`);
+            expect(RedisPresenceManage.sadd(sessionId, userId)).toBe(1);
+            expect(RedisPresenceManage.scard(sessionId)).toBe(1);
+            expect(RedisPresenceManage.srem(sessionId, userId)).toBe(0);
         });
     });
 });

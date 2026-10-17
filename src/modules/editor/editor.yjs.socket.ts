@@ -3,6 +3,7 @@ import { Duplex } from 'stream';
 import { createRequire } from 'module';
 import * as Y from 'yjs';
 import { SessionRepository, MAX_ACTIVE_PARTICIPANTS } from '../session/session.repository';
+import { EditorService } from './editor.service';
 import { JwtManage } from '../../core/config/jwt_manage';
 
 const customRequire = createRequire(__filename);
@@ -33,18 +34,33 @@ function createWebSocketServer(): WsServer {
     return new WebSocketServerClass({ noServer: true });
 }
 
+const yWebsocketPath = customRequire.resolve('y-websocket');
+const encoding = customRequire(customRequire.resolve('lib0/encoding', { paths: [yWebsocketPath] }));
+const decoding = customRequire(customRequire.resolve('lib0/decoding', { paths: [yWebsocketPath] }));
+const syncProtocol = customRequire(customRequire.resolve('y-protocols/sync', { paths: [yWebsocketPath] }));
+const awarenessProtocol = customRequire(customRequire.resolve('y-protocols/awareness', { paths: [yWebsocketPath] }));
+
+const MESSAGE_SYNC = 0;
+const MESSAGE_AWARENESS = 1;
+
 /**
- * Servidor WebSocket en /yjs-ws para sincronización distribuida con Yjs (y-websocket)
- * con validación doble del límite máximo de 4 usuarios activos por sesión (HU-06-08).
+ * Servidor WebSocket interno en /yjs-ws para sincronización CRDT en tiempo real (< 200ms)
+ * compatible con y-websocket (WebsocketProvider) y y-monaco (HU-06-08 y HU-12-14).
  */
 export class EditorYjsSocket {
     private wss: WsServer;
     private sessionRepository: SessionRepository;
+    private editorService: EditorService;
     private static docs: Map<string, Y.Doc> = new Map();
+    private static awarenessMap: Map<string, any> = new Map();
     private static roomConnections: Map<string, Set<WsClient>> = new Map();
 
-    constructor(sessionRepository: SessionRepository = new SessionRepository()) {
+    constructor(
+        sessionRepository: SessionRepository = new SessionRepository(),
+        editorService: EditorService = new EditorService()
+    ) {
         this.sessionRepository = sessionRepository;
+        this.editorService = editorService;
         this.wss = createWebSocketServer();
     }
 
@@ -54,6 +70,7 @@ export class EditorYjsSocket {
 
     public static resetState(): void {
         EditorYjsSocket.docs.clear();
+        EditorYjsSocket.awarenessMap.clear();
         EditorYjsSocket.roomConnections.clear();
     }
 
@@ -122,7 +139,7 @@ export class EditorYjsSocket {
                 }
 
                 this.wss.handleUpgrade(req, socket, head, (ws) => {
-                    this.handleConnection(ws, sessionId);
+                    void this.handleConnection(ws, sessionId);
                 });
             } catch {
                 socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
@@ -131,45 +148,109 @@ export class EditorYjsSocket {
         });
     }
 
-    private handleConnection(ws: WsClient, sessionId: string): void {
+    private async handleConnection(ws: WsClient, sessionId: string): Promise<void> {
         let doc = EditorYjsSocket.docs.get(sessionId);
         if (!doc) {
             doc = new Y.Doc();
             EditorYjsSocket.docs.set(sessionId, doc);
+            await this.editorService.initializeYDocForSession(sessionId, doc);
+
+            const awareness = new awarenessProtocol.Awareness(doc);
+            EditorYjsSocket.awarenessMap.set(sessionId, awareness);
+
+            doc.on('update', (update: Uint8Array, origin: unknown) => {
+                const encoder = encoding.createEncoder();
+                encoding.writeVarUint(encoder, MESSAGE_SYNC);
+                syncProtocol.writeUpdate(encoder, update);
+                const message = encoding.toUint8Array(encoder);
+
+                const roomClients = EditorYjsSocket.roomConnections.get(sessionId);
+                if (roomClients) {
+                    for (const client of roomClients) {
+                        if (client !== origin && client.readyState === 1) {
+                            client.send(message);
+                        }
+                    }
+                }
+            });
         }
 
+        const awareness = EditorYjsSocket.awarenessMap.get(sessionId);
         const clients = EditorYjsSocket.roomConnections.get(sessionId) ?? new Set<WsClient>();
         clients.add(ws);
         EditorYjsSocket.roomConnections.set(sessionId, clients);
 
-        // Enviar estado inicial de Y.Doc codificado al cliente conectado
-        const initialState = Y.encodeStateAsUpdate(doc);
+        // Enviar SyncStep1 inicial según el protocolo estándar de y-websocket
         if (ws.readyState === 1) {
-            ws.send(initialState);
+            const encoder = encoding.createEncoder();
+            encoding.writeVarUint(encoder, MESSAGE_SYNC);
+            syncProtocol.writeSyncStep1(encoder, doc);
+            ws.send(encoding.toUint8Array(encoder));
+
+            if (awareness && awareness.getStates().size > 0) {
+                const awarenessEncoder = encoding.createEncoder();
+                encoding.writeVarUint(awarenessEncoder, MESSAGE_AWARENESS);
+                encoding.writeVarUint8Array(
+                    awarenessEncoder,
+                    awarenessProtocol.encodeAwarenessUpdate(awareness, Array.from(awareness.getStates().keys()))
+                );
+                ws.send(encoding.toUint8Array(awarenessEncoder));
+            }
         }
 
-        ws.on('message', (message: Buffer | ArrayBuffer | Uint8Array) => {
+        ws.on('message', (rawMessage: Buffer | ArrayBuffer | Uint8Array) => {
             try {
-                const update = new Uint8Array(
-                    message instanceof ArrayBuffer
-                        ? message
-                        : ArrayBuffer.isView(message)
-                        ? message.buffer.slice(message.byteOffset, message.byteOffset + message.byteLength)
-                        : message
+                const message = new Uint8Array(
+                    rawMessage instanceof ArrayBuffer
+                        ? rawMessage
+                        : ArrayBuffer.isView(rawMessage)
+                        ? rawMessage.buffer.slice(rawMessage.byteOffset, rawMessage.byteOffset + rawMessage.byteLength)
+                        : rawMessage
                 );
-                if (doc && update.byteLength > 0) {
-                    Y.applyUpdate(doc, update);
+
+                if (message.byteLength === 0 || !doc) {
+                    return;
                 }
-                const roomClients = EditorYjsSocket.roomConnections.get(sessionId);
-                if (roomClients) {
-                    for (const client of roomClients) {
-                        if (client !== ws && client.readyState === 1) {
-                            client.send(update);
+
+                const decoder = decoding.createDecoder(message);
+                const messageType = decoding.readVarUint(decoder);
+
+                if (messageType === MESSAGE_SYNC) {
+                    const encoder = encoding.createEncoder();
+                    encoding.writeVarUint(encoder, MESSAGE_SYNC);
+                    syncProtocol.readSyncMessage(decoder, encoder, doc, ws);
+                    if (encoding.length(encoder) > 1 && ws.readyState === 1) {
+                        ws.send(encoding.toUint8Array(encoder));
+                    }
+                } else if (messageType === MESSAGE_AWARENESS && awareness) {
+                    const update = decoding.readVarUint8Array(decoder);
+                    awarenessProtocol.applyAwarenessUpdate(awareness, update, ws);
+
+                    const roomClients = EditorYjsSocket.roomConnections.get(sessionId);
+                    if (roomClients) {
+                        for (const client of roomClients) {
+                            if (client !== ws && client.readyState === 1) {
+                                client.send(message);
+                            }
                         }
                     }
                 }
             } catch {
-                // Ignorar tramas no binarias o de ping de control
+                // Fallback para actualizaciones binarias directas de Yjs
+                try {
+                    const rawUpdate = new Uint8Array(
+                        rawMessage instanceof ArrayBuffer
+                            ? rawMessage
+                            : ArrayBuffer.isView(rawMessage)
+                            ? rawMessage.buffer.slice(rawMessage.byteOffset, rawMessage.byteOffset + rawMessage.byteLength)
+                            : rawMessage
+                    );
+                    if (doc && rawUpdate.byteLength > 0) {
+                        Y.applyUpdate(doc, rawUpdate, ws);
+                    }
+                } catch {
+                    // Ignorar tramas inválidas
+                }
             }
         });
 
@@ -179,6 +260,9 @@ export class EditorYjsSocket {
                 roomClients.delete(ws);
                 if (roomClients.size === 0) {
                     EditorYjsSocket.roomConnections.delete(sessionId);
+                    if (doc) {
+                        void this.editorService.persistYDocState(sessionId, doc).catch(() => {});
+                    }
                 }
             }
         });
