@@ -1,5 +1,6 @@
 import { SesionColaborativa } from '@prisma/client';
-import { SessionRepository, CreateSessionData } from './session.repository';
+import { SessionRepository, CreateSessionData, JoinSessionResult } from './session.repository';
+import { SessionPresenceSocket } from './session.presence.socket';
 import { AppException } from '../../core/exception/app_exception';
 
 export interface CreateSessionDto {
@@ -29,6 +30,24 @@ export class SessionService {
         };
 
         return await this.sessionRepository.createSessionTransaction(data);
+    }
+
+    /**
+     * Une a un usuario autenticado a una sesión colaborativa existente validando
+     * el límite estricto de máximo 4 participantes activos (HU-06-08).
+     * Emite el evento 'user_joined' con la lista actualizada de participantes.
+     */
+    public async joinSession(sessionId: string, userId: string): Promise<JoinSessionResult> {
+        if (!userId) {
+            throw new AppException('JWT_INVALID');
+        }
+
+        const result = await this.sessionRepository.joinSessionTransaction(sessionId, userId);
+
+        // Emitir evento 'user_joined' por WebSocket con la lista actualizada de participantes
+        SessionPresenceSocket.emitUserJoined(sessionId, result.participants);
+
+        return result;
     }
 
     /**

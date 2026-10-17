@@ -1,29 +1,51 @@
 import { Socket, Server } from 'socket.io';
+import { SessionPresenceSocket, JoinSessionSocketPayload } from '../../modules/session/session.presence.socket';
 
 /**
- * Clase para manejar los eventos de Socket.io.
- * Mantiene la estructura de tu archivo original (SocketManageEvent).
+ * Clase para manejar los eventos de Socket.io e integrar la presencia
+ * y validación de límite de sesiones colaborativas (HU-06-08).
  */
 export class SocketManageEvent {
-    
-    // El 'io' es la instancia global del servidor de sockets.
-    // El 'socket' es el cliente que se acaba de conectar.
+    private presenceSocket: SessionPresenceSocket;
+
     constructor(private socket: Socket, private io: Server) {
-        console.log(`[Socket] Client connected: ${this.socket.id}`);
+        this.presenceSocket = new SessionPresenceSocket();
+        SessionPresenceSocket.setIO(this.io);
         this.setupListeners();
+        this.handleInitialHandshakeJoin();
+    }
+
+    private handleInitialHandshakeJoin(): void {
+        const sessionId =
+            (this.socket.handshake.auth?.sessionId as string | undefined) ||
+            (this.socket.handshake.query?.sessionId as string | undefined);
+
+        if (sessionId) {
+            void this.presenceSocket.handleJoinSession(this.socket, {
+                sessionId,
+                userId:
+                    (this.socket.handshake.auth?.userId as string | undefined) ||
+                    (this.socket.handshake.query?.userId as string | undefined),
+                token:
+                    (this.socket.handshake.auth?.token as string | undefined) ||
+                    (this.socket.handshake.query?.token as string | undefined),
+            });
+        }
     }
 
     private setupListeners(): void {
-        // Define aquí los listeners de eventos para el socket conectado
-        this.socket.on('disconnect', () => {
-            console.log(`[Socket] Client disconnected: ${this.socket.id}`);
-        });
+        this.socket.on(
+            'join_session',
+            async (
+                payload: JoinSessionSocketPayload,
+                callback?: (res: { ok: boolean; status: number; participants?: unknown[]; error?: string }) => void
+            ) => {
+                await this.presenceSocket.handleJoinSession(this.socket, payload, callback);
+            }
+        );
 
-        // Ejemplo de evento
-        // this.socket.on('new-message', (payload: { message: string }) => {
-        //     console.log(`Received message: ${payload.message}`);
-        //     // Envía el mensaje a todos los clientes
-        //     this.io.emit('message-from-server', { sender: this.socket.id, message: payload.message });
-        // });
+        this.socket.on('disconnect', () => {
+            this.presenceSocket.handleDisconnect(this.socket);
+        });
     }
 }

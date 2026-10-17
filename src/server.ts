@@ -5,9 +5,11 @@ import cors from 'cors';
 import morgan from 'morgan';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
-import { LoggerManage } from './core/config/logger'
+import { LoggerManage } from './core/config/logger';
 
-import { SocketManageEvent } from './core/config/socket_manage'; 
+import { SocketManageEvent } from './core/config/socket_manage';
+import { SessionPresenceSocket } from './modules/session/session.presence.socket';
+import { EditorYjsSocket } from './modules/editor/editor.yjs.socket';
 import AuthRoutes from './feature/auth/auth_routes';
 import SessionRoutes from './modules/session/session.routes';
 import { exceptionManage } from './core/exception/exception_manage';
@@ -16,35 +18,41 @@ import cookieParser from 'cookie-parser';
 
 /**
  * Clase que gestiona la configuración y el arranque del servidor Express con TypeScript.
- * Se encarga de middlewares, rutas, y la inicialización de Socket.io.
+ * Se encarga de middlewares, rutas, y la inicialización de Socket.io y y-websocket.
  */
 export class Server {
     private app: Express;
     private port: number | string;
     private httpServer: http.Server;
     private io: SocketIOServer;
+    private presenceSocket: SessionPresenceSocket;
+    private yjsSocket: EditorYjsSocket;
     private mainRoute: string;
     private routesSrc: { [key: string]: string };
     private allowedOrigins: string[];
 
     constructor() {
-        dotenv.config(); 
+        dotenv.config();
         this.allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173')
             .split(',')
             .map((origin) => origin.trim())
             .filter(Boolean);
-        
+
         this.app = express();
         this.port = process.env.PORT || 3000;
         this.httpServer = http.createServer(this.app);
-        
+
         this.io = new SocketIOServer(this.httpServer, {
             cors: {
                 origin: this.allowedOrigins,
                 methods: ['GET', 'POST'],
                 credentials: true,
-            }
+            },
+            destroyUpgrade: false,
         });
+
+        this.presenceSocket = new SessionPresenceSocket();
+        this.yjsSocket = new EditorYjsSocket();
 
         this.mainRoute = '/api/v1';
         this.routesSrc = this.routesSource();
@@ -58,27 +66,23 @@ export class Server {
      * Configura los middlewares globales de Express (CORS, Helmet, Morgan, Body Parser).
      */
     private middlewares(): void {
-        
-        this.app.use(cors({
-            origin: this.allowedOrigins,
-            methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-            credentials: true,
-        }));
+        this.app.use(
+            cors({
+                origin: this.allowedOrigins,
+                methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+                credentials: true,
+            })
+        );
 
         this.app.use(helmet());
-
         this.app.use(morgan('combined'));
-
         this.app.use(express.json());
-
         this.app.use(express.static('public'));
-
         this.app.use(cookieParser());
     }
 
     /**
      * Define las rutas base para los módulos.
-     * @returns Un objeto con las rutas base.
      */
     private routesSource(): { [key: string]: string } {
         return {
@@ -97,27 +101,29 @@ export class Server {
         this.app.use(this.routesSrc.sessions, SessionRoutes);
 
         this.app.get('/', (req, res) => {
-            res.status(200).json({ 
-                message: 'API v1.0 running successfully.' 
+            res.status(200).json({
+                message: 'API v1.0 running successfully.',
             });
         });
-        
+
         // Manejador de ruta no encontrada (404)
         this.app.use((req, res) => {
             res.status(404).json({
                 code: 404,
-                message: `Route not found: ${req.method} ${req.path}`
+                message: `Route not found: ${req.method} ${req.path}`,
             });
         });
-        
+
         this.app.use(exceptionManage);
     }
-    
+
     /**
-     * Configura el manejo de eventos de Socket.io.
+     * Configura el manejo de eventos de Socket.io y el servidor WebSocket de Yjs (/yjs-ws).
      */
     private socket(): void {
-        this.io.on('connection', (socket) => new SocketManageEvent(socket, this.io) );
+        this.presenceSocket.registerMiddleware(this.io);
+        this.io.on('connection', (socket) => new SocketManageEvent(socket, this.io));
+        this.yjsSocket.attach(this.httpServer);
     }
 
     /**
@@ -129,11 +135,11 @@ export class Server {
             const message = `[SERVER] Server enable at Port: ${this.port} at date ${datetime} in ${process.env.NODE_ENV || 'development'} mode.`;
             console.log(message);
         });
-        LoggerManage.info("Iniciado el servidor", {
+        LoggerManage.info('Iniciado el servidor', {
             port: this.port,
             date: datetime,
-            enviroment: process.env.NODE_ENV
-        })
+            enviroment: process.env.NODE_ENV,
+        });
     }
 
     /**
@@ -141,5 +147,19 @@ export class Server {
      */
     public getApp(): Express {
         return this.app;
+    }
+
+    /**
+     * Obtiene la instancia del servidor HTTP subyacente.
+     */
+    public getHttpServer(): http.Server {
+        return this.httpServer;
+    }
+
+    /**
+     * Obtiene la instancia de Socket.IO.
+     */
+    public getIO(): SocketIOServer {
+        return this.io;
     }
 }

@@ -36,4 +36,30 @@ export class SessionController {
             next(error);
         }
     };
+
+    /**
+     * Handler para unirse a una sesión colaborativa existente (POST /api/v1/sessions/:id/join).
+     * Valida el límite de 4 usuarios activos y devuelve 200 OK con la lista de participantes.
+     */
+    public joinSession = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+        try {
+            const userId = req.user?.sub;
+            if (!userId) {
+                throw new AppException('JWT_INVALID');
+            }
+
+            const sessionId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+            const result = await this.sessionService.joinSession(sessionId, userId);
+
+            const response = new SuccessResponse(
+                result,
+                SUCCESS_MESSAGES.SESSION_JOINED,
+                SUCCESS_CODES.OK
+            );
+
+            res.status(response.httpCode).json(response.body);
+        } catch (error) {
+            next(error);
+        }
+    };
 }

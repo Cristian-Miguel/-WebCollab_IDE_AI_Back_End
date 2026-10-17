@@ -183,5 +183,9 @@ export const ERROR_MESSAGES = {
         appCode: 'E3016',
         message: 'El campo no existe o no se puede realizar un filtro.',
     },
-    
+    SESSION_FULL: {
+        httpCode: ERROR_CODES.FORBIDDEN,
+        appCode: 'E3020',
+        message: 'La sesión colaborativa ha alcanzado el límite máximo de 4 usuarios activos.',
+    },
 } as const;

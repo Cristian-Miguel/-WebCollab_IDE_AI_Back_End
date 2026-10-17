@@ -89,4 +89,8 @@ export const SUCCESS_MESSAGES = {
         code: 'S3000',
         message: 'Sesión colaborativa creada exitosamente.',
     },
+    SESSION_JOINED: {
+        code: 'S3001',
+        message: 'Te has unido a la sesión colaborativa exitosamente.',
+    },
 } as const;
