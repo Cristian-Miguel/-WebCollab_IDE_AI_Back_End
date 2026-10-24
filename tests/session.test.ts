@@ -15,6 +15,7 @@ import {
     INVALID_SESSION_RETENTION_DAYS,
     MS_PER_DAY
 } from '../src/modules/session/session.cleanup.job';
+import { resetAIRateLimitStore } from '../src/modules/ai-assistant/ai.rate-limit.middleware';
 import { EditorYjsSocket } from '../src/modules/editor/editor.yjs.socket';
 import { EditorService } from '../src/modules/editor/editor.service';
 import { RedisPresenceManage, REDIS_GLOBAL_ACTIVE_USERS_KEY } from '../src/core/config/redis_manage';
@@ -56,7 +57,7 @@ const registerTestUser = async (email: string, fullName: string) => {
     };
 };
 
-describe('HU-04, HU-06-08, HU-12-14, HU-16, HU-24 & HU-26: Session, Limit, Yjs Sync, AI Assistant, Cleanup Job & Redis Concurrency Tests', () => {
+describe('HU-04, HU-06-08, HU-12-14, HU-16, HU-24, HU-26 & HU-27: Session, Limit, Yjs Sync, AI Assistant, Cleanup Job, Redis Concurrency & Rate Limiting Tests', () => {
     let authToken: string;
     let userId: string;
 
@@ -64,6 +65,7 @@ describe('HU-04, HU-06-08, HU-12-14, HU-16, HU-24 & HU-26: Session, Limit, Yjs S
         await prisma.$connect();
         await cleanDatabase();
         SessionPresenceSocket.resetState();
+        resetAIRateLimitStore();
 
         const owner = await registerTestUser('sessionowner@example.com', 'Session Owner User');
         authToken = owner.token;
@@ -73,6 +75,7 @@ describe('HU-04, HU-06-08, HU-12-14, HU-16, HU-24 & HU-26: Session, Limit, Yjs S
     afterAll(async () => {
         SessionPresenceSocket.resetState();
         EditorYjsSocket.resetState();
+        resetAIRateLimitStore();
         if (httpServer.listening) {
             await new Promise<void>((resolve) => httpServer.close(() => resolve()));
         }
@@ -490,7 +493,11 @@ describe('HU-04, HU-06-08, HU-12-14, HU-16, HU-24 & HU-26: Session, Limit, Yjs S
             });
         });
 
-        describe('HU-16: Sugerencias de Código mediante IA (POST /api/v1/ai/suggest)', () => {
+        describe('HU-16 & HU-27: Sugerencias de Código mediante IA y Rate Limiting en Redis (POST /api/v1/ai/suggest)', () => {
+            beforeEach(() => {
+                resetAIRateLimitStore();
+            });
+
             it('POST /api/v1/ai/suggest - Should fail with 401 Unauthorized without JWT', async () => {
                 const res = await request(app)
                     .post('/api/v1/ai/suggest')
@@ -540,6 +547,36 @@ describe('HU-04, HU-06-08, HU-12-14, HU-16, HU-24 & HU-26: Session, Limit, Yjs S
                 expect(savedInDb?.sesionId).toBe(sessionId);
                 expect(savedInDb?.usuarioId).toBe(userId);
                 expect(savedInDb?.prompt).toContain('Agrega una sección semántica debajo del título');
+            });
+
+            it('HU-27: POST /api/v1/ai/suggest - Should allow up to 5 requests per minute and reject the 6th request in a burst with 429 Too Many Requests', async () => {
+                const payload = {
+                    contextoCodigo: 'function calcularTotal(items) { return items.length; }',
+                    lenguaje: 'javascript',
+                    promptUsuario: 'Optimiza la función para sumar precios',
+                    sesionId: sessionId,
+                };
+
+                // Execute a burst of 6 consecutive requests for the same user
+                for (let attempt = 1; attempt <= 5; attempt++) {
+                    const okRes = await request(app)
+                        .post('/api/v1/ai/suggest')
+                        .set('Authorization', `Bearer ${user2.token}`)
+                        .send(payload);
+
+                    expect(okRes.status).toBe(200);
+                    expect(okRes.body.data).toHaveProperty('sugerencia');
+                }
+
+                // The 6th request within the 1-minute window MUST be rejected with 429 Too Many Requests
+                const sixthRes = await request(app)
+                    .post('/api/v1/ai/suggest')
+                    .set('Authorization', `Bearer ${user2.token}`)
+                    .send(payload);
+
+                expect(sixthRes.status).toBe(429);
+                expect(sixthRes.body).toHaveProperty('code', 'E4001');
+                expect(sixthRes.body.message).toContain('límite de peticiones');
             });
         });
 

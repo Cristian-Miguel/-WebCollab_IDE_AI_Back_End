@@ -32,6 +32,9 @@ importers:
       express:
         specifier: ^5.2.1
         version: 5.3.0(supports-color@5.5.0)
+      express-rate-limit:
+        specifier: ^8.7.1
+        version: 8.7.1(express@5.3.0(supports-color@5.5.0))
       express-validator:
         specifier: ^7.3.2
         version: 7.3.2
@@ -40,7 +43,7 @@ importers:
         version: 8.3.0
       ioredis:
         specifier: ^6.0.0
-        version: 6.0.0
+        version: 6.0.0(supports-color@5.5.0)
       jsonwebtoken:
         specifier: ^9.0.3
         version: 9.0.3
@@ -59,6 +62,12 @@ importers:
       pg:
         specifier: ^8.16.3
         version: 8.23.1
+      rate-limit-redis:
+        specifier: ^6.0.1
+        version: 6.0.1(express-rate-limit@8.7.1(express@5.3.0(supports-color@5.5.0)))
+      redis:
+        specifier: ^6.3.0
+        version: 6.3.0
       socket.io:
         specifier: ^4.8.4
         version: 4.8.4(supports-color@5.5.0)
@@ -973,6 +982,42 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
+
+  '@redis/bloom@6.3.0':
+    resolution: {integrity: sha512-NQ5poYpZr0jv6zazN1cy6JY5kIipKFZ3R9GTL4kOUTX3a9YAfY29U8bsE4lWhVQEM+G4V0BXVC57mubIdDijeA==}
+    engines: {node: '>= 20.0.0'}
+    peerDependencies:
+      '@redis/client': ^6.3.0
+
+  '@redis/client@6.3.0':
+    resolution: {integrity: sha512-fHrjwGCBvAANGi+TuRuwKi83sIOzgHr8eh+Uf48w3fSX7Hhrz174NrWqfJhAC2vnN0d/tfaZpdr6+o6JC3QHwg==}
+    engines: {node: '>= 20.0.0'}
+    peerDependencies:
+      '@node-rs/xxhash': ^1.1.0
+      '@opentelemetry/api': '>=1 <2'
+    peerDependenciesMeta:
+      '@node-rs/xxhash':
+        optional: true
+      '@opentelemetry/api':
+        optional: true
+
+  '@redis/json@6.3.0':
+    resolution: {integrity: sha512-yt6vRfPBXtW/3qm53cF81TSQpLMjWdW4/2E9WQ2GgbvsKkuCKCFQIcMiKlil1ZMnezK+IQuS795xKU5psbaegw==}
+    engines: {node: '>= 20.0.0'}
+    peerDependencies:
+      '@redis/client': ^6.3.0
+
+  '@redis/search@6.3.0':
+    resolution: {integrity: sha512-RPXAZmKjZZG7Tm7m1w9keFdXzbL91PiSHQBfQRe9xwW40jNsTRbG0FwhIz4QlHPU4gKDAsCy8IQHj4yZl4H9rw==}
+    engines: {node: '>= 20.0.0'}
+    peerDependencies:
+      '@redis/client': ^6.3.0
+
+  '@redis/time-series@6.3.0':
+    resolution: {integrity: sha512-+fJOB8mN1z5WRakCJNh5lVdz1KqvHGSOistsKeitD24QsCtPwyRQXWC0iq6T/i/ubLE/YcguZqPm8F598MKk4A==}
+    engines: {node: '>= 20.0.0'}
+    peerDependencies:
+      '@redis/client': ^6.3.0
 
   '@sinclair/typebox@0.34.41':
     resolution: {integrity: sha512-6gS8pZzSXdyRHTIqoqSVknxolr1kzfy4/CeDnrzsVz8TTIWUbOBr6gnzOmTYJ3eXQNh4IYHIGi5aIL7sOZ2G/g==}
@@ -2079,6 +2124,12 @@ packages:
     resolution: {integrity: sha512-0LNuMvs8/5mRYhnCR4k+lGV7fqPMs6Bnksda4S3zsCUmdxBpAn4zU4NNzXdq1pMKe/H4W5t/zVIDSJ/H3e0vDA==}
     engines: {node: ^18.14.0 || ^20.0.0 || ^22.0.0 || >=24.0.0}
 
+  express-rate-limit@8.7.1:
+    resolution: {integrity: sha512-2FXbqkygil3mZiXzEtM0IjE/UBmBNot0J1GEVrJT4JbrvwOSoEtqtO+wHbiMQELWe1eNvHoYRg2dkjOid+6JkA==}
+    engines: {node: '>= 16'}
+    peerDependencies:
+      express: '>= 4.11'
+
   express-validator@7.3.2:
     resolution: {integrity: sha512-ctLw1Vl6dXVH62dIQMDdTAQkrh480mkFuG6/SGXOaVlwPNukhRAe7EgJIMJ2TSAni8iwHBRp530zAZE5ZPF2IA==}
     engines: {node: '>= 8.0.0'}
@@ -2377,6 +2428,10 @@ packages:
   ioredis@6.0.0:
     resolution: {integrity: sha512-f+Dtubxfpf6KYFq7WVXJoOLn0bk4TJrMrN9SzeE+jrWrCWj7XX3fA6vkryafhADX+GMymRxgDJDOI33COkJc0w==}
     engines: {node: '>=20.0.0'}
+
+  ip-address@10.7.4:
+    resolution: {integrity: sha512-DWBMKyeM25D70nrIiTkgQth59/G+naKOTep6huF9j+GmeK3DMD60Zvxg5d5qQnz+38AHgou6ean2LECX+lrKDg==}
+    engines: {node: '>= 12'}
 
   ipaddr.js@1.9.1:
     resolution: {integrity: sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==}
@@ -3126,6 +3181,12 @@ packages:
     resolution: {integrity: sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==}
     engines: {node: '>= 0.6'}
 
+  rate-limit-redis@6.0.1:
+    resolution: {integrity: sha512-qys7ulbh5X4Bohfjm6BXFWBiyzK6r5eGdFghPWZfJwggnDFTDwCIRq1u7tmN50vLTp4Kbe1h/ZAuBOn/hVpjtQ==}
+    engines: {node: '>= 16'}
+    peerDependencies:
+      express-rate-limit: '>= 8.6.0'
+
   raw-body@3.0.2:
     resolution: {integrity: sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA==}
     engines: {node: '>= 0.10'}
@@ -3163,6 +3224,10 @@ packages:
   redis-errors@1.2.0:
     resolution: {integrity: sha512-1qny3OExCf0UvUV/5wpYKf2YwPcOqXzkwKKSmKHiE6ZMQs5heeE/c8eXK+PNllPvmjgAbfnsbpkGZWy8cBpn9w==}
     engines: {node: '>=4'}
+
+  redis@6.3.0:
+    resolution: {integrity: sha512-XFQbPie1lGpKeUZ8ySYY43yLnQy/iIQtHNvIr/1XdaABpb96rUSdm3Mfl+98FEVbv9ZJIzINMno5s0Nh8E5LEw==}
+    engines: {node: '>= 20.0.0'}
 
   remeda@2.33.4:
     resolution: {integrity: sha512-ygHswjlc/opg2VrtiYvUOPLjxjtdKvjGz1/plDhkG66hjNjFr1xmfrs2ClNFo/E6TyUFiwYNh53bKV26oBoMGQ==}
@@ -4573,6 +4638,24 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.3.0
 
+  '@redis/bloom@6.3.0(@redis/client@6.3.0)':
+    dependencies:
+      '@redis/client': 6.3.0
+
+  '@redis/client@6.3.0': {}
+
+  '@redis/json@6.3.0(@redis/client@6.3.0)':
+    dependencies:
+      '@redis/client': 6.3.0
+
+  '@redis/search@6.3.0(@redis/client@6.3.0)':
+    dependencies:
+      '@redis/client': 6.3.0
+
+  '@redis/time-series@6.3.0(@redis/client@6.3.0)':
+    dependencies:
+      '@redis/client': 6.3.0
+
   '@sinclair/typebox@0.34.41': {}
 
   '@sinonjs/commons@3.0.1':
@@ -5759,6 +5842,14 @@ snapshots:
       jest-mock: 30.5.2
       jest-util: 30.5.1
 
+  express-rate-limit@8.7.1(express@5.3.0(supports-color@5.5.0)):
+    dependencies:
+      debug: 4.4.3(supports-color@5.5.0)
+      express: 5.3.0(supports-color@5.5.0)
+      ip-address: 10.7.4
+    transitivePeerDependencies:
+      - supports-color
+
   express-validator@7.3.2:
     dependencies:
       lodash: 4.18.1
@@ -6080,7 +6171,7 @@ snapshots:
 
   internmap@2.0.3: {}
 
-  ioredis@6.0.0:
+  ioredis@6.0.0(supports-color@5.5.0):
     dependencies:
       '@ioredis/commands': 2.0.0
       cluster-key-slot: 1.1.1
@@ -6090,6 +6181,8 @@ snapshots:
       standard-as-callback: 2.1.0
     transitivePeerDependencies:
       - supports-color
+
+  ip-address@10.7.4: {}
 
   ipaddr.js@1.9.1: {}
 
@@ -7020,6 +7113,10 @@ snapshots:
 
   range-parser@1.2.1: {}
 
+  rate-limit-redis@6.0.1(express-rate-limit@8.7.1(express@5.3.0(supports-color@5.5.0))):
+    dependencies:
+      express-rate-limit: 8.7.1(express@5.3.0(supports-color@5.5.0))
+
   raw-body@3.0.2:
     dependencies:
       bytes: 3.1.2
@@ -7056,6 +7153,17 @@ snapshots:
   readdirp@5.1.1: {}
 
   redis-errors@1.2.0: {}
+
+  redis@6.3.0:
+    dependencies:
+      '@redis/bloom': 6.3.0(@redis/client@6.3.0)
+      '@redis/client': 6.3.0
+      '@redis/json': 6.3.0(@redis/client@6.3.0)
+      '@redis/search': 6.3.0(@redis/client@6.3.0)
+      '@redis/time-series': 6.3.0(@redis/client@6.3.0)
+    transitivePeerDependencies:
+      - '@node-rs/xxhash'
+      - '@opentelemetry/api'
 
   remeda@2.33.4: {}
 
