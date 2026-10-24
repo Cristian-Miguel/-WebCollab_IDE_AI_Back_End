@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { BcryptManage } from '../../core/config/bcript_manage';
 import { JwtManage } from '../../core/config/jwt_manage';
+import { RedisPresenceManage } from '../../core/config/redis_manage';
 import { LoggerManage } from '../../core/config/logger'; // Asumiendo que has importado LoggerManage
 import { AppException } from '../../core/exception/app_exception';
 import { PrismaClient, Role, User } from '@prisma/client'; // Importamos tipos de Prisma
@@ -9,7 +10,7 @@ import { AuthLoginBody, AuthResponse, AuthSessionContext } from './auth_model';
 import { AuthRepository } from './auth_repository';
 import { sendEmail } from '../../core/config/mail_sender'; // Importamos el mail_sender
 import { uploadSingleImage } from '../../core/config/multer_manage'
-import { toUserDomain, UserApi, UserDomain, userToUserDomain } from '../user/user_model';
+import { toUserDomain, UserApi, UserDomain } from '../user/user_model';
 import { DatabaseManage } from '../../core/config/database_manage';
 import { RoleRepository } from '../role/role_repository';
 import { ROLES } from '../../core/const/roles';
@@ -130,7 +131,7 @@ export class AuthService {
         profileImageFile: Express.Multer.File | undefined,
         context: AuthSessionContext = {}
     ): Promise<AuthResponse> {
-        const { password, ...rest } = userData;
+        const { password } = userData;
 
         let profileImageUrl: string = '';
         if (profileImageFile) {
@@ -233,10 +234,23 @@ export class AuthService {
         return { accessToken, refreshToken };
     }
 
-    public async logout(sessionId: string, userId: string): Promise<void> {
+    /**
+     * HU-25: Cierra la sesión del usuario, extrae el `jti` y `exp` del Access Token actual
+     * y lo registra en la lista negra de Redis (`blacklist:token:<jti>`) con el TTL restante.
+     */
+    public async logout(sessionId: string, userId: string, accessToken?: string): Promise<void> {
         const user = await this.userRepository.findUserById(userId);
         if (!user || user.isDeleted) {
             throw new AppException('SESSION_INACTIVE');
+        }
+
+        if (accessToken) {
+            const { jti, exp } = JwtManage.extractJtiAndExp(accessToken);
+            const effectiveJti = jti || sessionId;
+            const ttlSeconds = RedisPresenceManage.calculateRemainingTtlSeconds(exp);
+            if (effectiveJti && ttlSeconds > 0) {
+                await RedisPresenceManage.blacklistToken(effectiveJti, ttlSeconds);
+            }
         }
 
         await this.prisma.$transaction(async (tx) => {
@@ -248,7 +262,7 @@ export class AuthService {
             await this.userRepository.updateLastLogout(userId, tx);
         });
 
-        LoggerManage.info('User logged out.', { userId });
+        LoggerManage.info('User logged out and token blacklisted.', { userId, sessionId });
     }
 
     /**

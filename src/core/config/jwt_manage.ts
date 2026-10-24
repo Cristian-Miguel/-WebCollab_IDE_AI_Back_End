@@ -1,11 +1,12 @@
 import jwt, { SignOptions } from 'jsonwebtoken';
+import { randomUUID } from 'node:crypto';
 import { LoggerManage } from './logger';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
 
 // Definición de las interfaces para los Payloads de los tokens
-// El 'iss' (issuer) y 'exp' (expiration) son campos estándar de JWT
+// El 'iss' (issuer), 'exp' (expiration) y 'jti' (JWT ID) son campos estándar de JWT
 export interface AccessTokenPayload {
     sub: string;
     sessionId: string;
@@ -13,6 +14,9 @@ export interface AccessTokenPayload {
     profileImageUrl: string;
     role: string;
     type: string;
+    jti?: string;
+    exp?: number;
+    iat?: number;
 }
 
 export interface RefreshTokenPayload {
@@ -59,7 +63,7 @@ export class JwtManage {
     }
 
     /**
-     * Genera un token de acceso (Access Token).
+     * Genera un token de acceso (Access Token) con jti único para soporte de Blacklist en Redis (HU-25).
      * @param userUuid UUID del usuario.
      * @param email Correo del usuario.
      * @param profileImageUrl URL de la imagen de perfil.
@@ -74,13 +78,15 @@ export class JwtManage {
         sessionId: string
     ): string {
         JwtManage.validateSecrets();
+        const jti = randomUUID();
         const payload: AccessTokenPayload = {
             sub: userUuid,
             sessionId,
             email: email,
             profileImageUrl: profileImageUrl,
             role: role,
-            type: JwtManage.SCOPE_ACCESS_TOKEN
+            type: JwtManage.SCOPE_ACCESS_TOKEN,
+            jti,
         };
         const options: SignOptions = {
             audience: JwtManage.AUDIENCE,
@@ -132,7 +138,6 @@ export class JwtManage {
      * @returns El token para verificar el email firmado.
      */
     public static generateEmailValidationToken(userUuid: string, email: string): string {
-        // const secret = JwtManage.SECRET_KEY;
         JwtManage.validateSecrets();
         const payload: RefreshTokenPayload = {
             sub: userUuid,
@@ -155,11 +160,10 @@ export class JwtManage {
     }
 
     /**
-     * Genera un token para validar el email (Email Validation Token).
-     * @param userUuid UUID del usuario.
+     * Genera un token para cambiar contraseña (Password Reset Token).
+     * @param uuid UUID del usuario.
      * @param email Correo del usuario.
-     * @param timestamp El tiempo de valides del token.
-     * @returns El token para verificar el email firmado.
+     * @returns El token para restablecer contraseña firmado.
      */
     public static generatePasswordResetToken(uuid: string, email: string): string {
         JwtManage.validateSecrets();
@@ -241,7 +245,7 @@ export class JwtManage {
     }
 
      /**
-     * Verifica y decodifica un token de refresco.
+     * Verifica y decodifica un token para validar el correo electrónico.
      * @param token Token para validar el correo electronico a verificar.
      * @returns El payload decodificado si es válido.
      */
@@ -262,7 +266,7 @@ export class JwtManage {
     }
 
     /**
-     * Verifica y decodifica un token de refresco.
+     * Verifica y decodifica un token para cambiar contraseña.
      * @param token Token para cambiar contraseña a verificar.
      * @returns El payload decodificado si es válido.
      */
@@ -280,6 +284,20 @@ export class JwtManage {
             LoggerManage.warn('Refresh Token verification failed.', { error: error instanceof Error ? error.message : 'Unknown JWT error' });
             throw error;
         }
+    }
+
+    /**
+     * Extrae los claims jti y exp del JWT para el registro en la lista negra de Redis (HU-25).
+     */
+    public static extractJtiAndExp(token: string): { jti?: string; exp?: number } {
+        const decoded = jwt.decode(token);
+        if (!decoded || typeof decoded === 'string') {
+            return {};
+        }
+        return {
+            jti: typeof decoded.jti === 'string' ? decoded.jti : undefined,
+            exp: typeof decoded.exp === 'number' ? decoded.exp : undefined,
+        };
     }
 
     public static getExpiredAtFromToken(token: string): Date | undefined {

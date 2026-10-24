@@ -98,15 +98,21 @@ export class AuthController {
     };
 
     /**
-     * @description Cierra la sesión del usuario (guarda el token en lista negra).
-     * Requiere que el middleware de autenticación haya adjuntado el payload en `req.user`.
+     * @description Cierra la sesión del usuario, invalida la sesión en BD y agrega el `jti` del Access Token
+     * a la lista negra en Redis (`blacklist:token:<jti>`) con el TTL restante (HU-25).
      */
     public logout = async (req: Request, res: Response): Promise<void> => {
         if (!req.user) {
             throw new AppException('JWT_MISSING_PAYLOAD');
         }
 
-        await this.authService.logout(req.user.sessionId, req.user.sub);
+        const rawToken =
+            req.accessToken ||
+            (req.headers.authorization?.startsWith('Bearer ')
+                ? req.headers.authorization.slice(7)
+                : undefined);
+
+        await this.authService.logout(req.user.sessionId, req.user.sub, rawToken);
 
         res.clearCookie('refreshToken', {
             httpOnly: true,
@@ -176,7 +182,7 @@ export class AuthController {
     };
 
     /**
-     * @description Valida el correo electrónico del usuario usando el token del link.
+     * @description Reenvía el correo de validación al usuario autenticado.
      */
     public resendValidateEmail = async (req: Request, res: Response): Promise<void> => {
         if (!req.user) {
