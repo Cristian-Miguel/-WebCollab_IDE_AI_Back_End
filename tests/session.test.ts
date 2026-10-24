@@ -1,10 +1,17 @@
 import request from 'supertest';
 import http from 'http';
+import crypto from 'crypto';
 import { AddressInfo } from 'net';
 import * as Y from 'yjs';
 import { app, httpServer } from '../src/app';
 import { DatabaseManage } from '../src/core/config/database_manage';
 import { SessionPresenceSocket } from '../src/modules/session/session.presence.socket';
+import {
+    SessionCleanupJob,
+    DAILY_MIDNIGHT_CRON,
+    INVALID_SESSION_RETENTION_DAYS,
+    MS_PER_DAY
+} from '../src/modules/session/session.cleanup.job';
 import { EditorYjsSocket } from '../src/modules/editor/editor.yjs.socket';
 import { EditorService } from '../src/modules/editor/editor.service';
 import { RedisPresenceManage } from '../src/core/config/redis_manage';
@@ -46,7 +53,7 @@ const registerTestUser = async (email: string, fullName: string) => {
     };
 };
 
-describe('HU-04, HU-06-08, HU-12-14 & HU-16: Session, Limit, Yjs Sync & AI Assistant Integration Tests', () => {
+describe('HU-04, HU-06-08, HU-12-14, HU-16 & HU-24: Session, Limit, Yjs Sync, AI Assistant & Session Cleanup Job Tests', () => {
     let authToken: string;
     let userId: string;
 
@@ -405,6 +412,114 @@ describe('HU-04, HU-06-08, HU-12-14 & HU-16: Session, Limit, Yjs Sync & AI Assis
                 expect(savedInDb?.sesionId).toBe(sessionId);
                 expect(savedInDb?.usuarioId).toBe(userId);
                 expect(savedInDb?.prompt).toContain('Agrega una sección semántica debajo del título');
+            });
+        });
+
+        describe('HU-24: Limpieza Automática de Sesiones e Invalidation (Job Programado)', () => {
+            it('Should validate daily midnight cron syntax (0 0 * * *) and start/stop without blocking Node.js Event Loop', async () => {
+                const cleanupJob = new SessionCleanupJob(prisma);
+
+                expect(cleanupJob.getCronExpression()).toBe(DAILY_MIDNIGHT_CRON);
+                expect(cleanupJob.isValidCronExpression('0 0 * * *')).toBe(true);
+                expect(cleanupJob.isValidCronExpression('invalid-cron-pattern')).toBe(false);
+
+                const task = cleanupJob.start();
+                expect(task).toBeDefined();
+                expect(cleanupJob.getTask()).toBe(task);
+
+                // Verify that starting the scheduled job does not block the Event Loop
+                let eventLoopTicked = false;
+                await new Promise<void>((resolve) => {
+                    setImmediate(() => {
+                        eventLoopTicked = true;
+                        resolve();
+                    });
+                });
+                expect(eventLoopTicked).toBe(true);
+
+                // Verify that starting with an invalid cron expression throws an error
+                const invalidJob = new SessionCleanupJob(prisma, 'bad cron');
+                expect(() => invalidJob.start()).toThrow('Invalid cron expression');
+
+                cleanupJob.stop();
+                expect(cleanupJob.getTask()).toBeNull();
+            });
+
+            it('Should delete SesionUsuario records where expiresAt < NOW() OR (isValid == false and > 7 days old), while preserving active and recent invalid sessions', async () => {
+                await prisma.sesionUsuario.deleteMany({ where: { userId } });
+
+                const now = new Date('2026-10-24T00:00:00.000Z');
+                const expiredDate = new Date(now.getTime() - 2 * MS_PER_DAY); // 2 days ago (< NOW)
+                const futureDate = new Date(now.getTime() + 15 * MS_PER_DAY); // 15 days in future (> NOW)
+                const olderThan7Days = new Date(now.getTime() - (INVALID_SESSION_RETENTION_DAYS + 2) * MS_PER_DAY); // 9 days ago
+                const newerThan7Days = new Date(now.getTime() - 3 * MS_PER_DAY); // 3 days ago
+
+                const makeHash = (seed: string) =>
+                    crypto.createHash('sha256').update(seed).digest('hex');
+
+                // 1. Obsolete: expiresAt < NOW() (even if isValid is true) -> MUST BE DELETED
+                const expiredSession = await prisma.sesionUsuario.create({
+                    data: {
+                        userId,
+                        refreshTokenHash: makeHash('expired-session-token'),
+                        isValid: true,
+                        expiresAt: expiredDate,
+                        createdAt: olderThan7Days,
+                        updatedAt: newerThan7Days,
+                    }
+                });
+
+                // 2. Obsolete: isValid == false AND > 7 days old -> MUST BE DELETED
+                const oldInvalidSession = await prisma.sesionUsuario.create({
+                    data: {
+                        userId,
+                        refreshTokenHash: makeHash('old-invalid-session-token'),
+                        isValid: false,
+                        expiresAt: futureDate,
+                        createdAt: olderThan7Days,
+                        updatedAt: olderThan7Days,
+                    }
+                });
+
+                // 3. Retained: isValid == false BUT <= 7 days old (3 days old) and not expired -> MUST BE KEPT
+                const recentInvalidSession = await prisma.sesionUsuario.create({
+                    data: {
+                        userId,
+                        refreshTokenHash: makeHash('recent-invalid-session-token'),
+                        isValid: false,
+                        expiresAt: futureDate,
+                        createdAt: newerThan7Days,
+                        updatedAt: newerThan7Days,
+                    }
+                });
+
+                // 4. Retained: Active valid session (isValid == true and expiresAt > NOW()) -> MUST BE KEPT
+                const activeValidSession = await prisma.sesionUsuario.create({
+                    data: {
+                        userId,
+                        refreshTokenHash: makeHash('active-valid-session-token'),
+                        isValid: true,
+                        expiresAt: futureDate,
+                        createdAt: newerThan7Days,
+                        updatedAt: newerThan7Days,
+                    }
+                });
+
+                const cleanupJob = new SessionCleanupJob(prisma);
+                const result = await cleanupJob.executeCleanup(now);
+
+                expect(result.deletedCount).toBe(2);
+                expect(result.executedAt.toISOString()).toBe(now.toISOString());
+
+                const remainingSessions = await prisma.sesionUsuario.findMany({
+                    where: { userId }
+                });
+                const remainingIds = remainingSessions.map((s) => s.id);
+
+                expect(remainingIds).not.toContain(expiredSession.id);
+                expect(remainingIds).not.toContain(oldInvalidSession.id);
+                expect(remainingIds).toContain(recentInvalidSession.id);
+                expect(remainingIds).toContain(activeValidSession.id);
             });
         });
     });

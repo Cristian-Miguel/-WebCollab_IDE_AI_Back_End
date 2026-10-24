@@ -9,6 +9,7 @@ import { LoggerManage } from './core/config/logger';
 
 import { SocketManageEvent } from './core/config/socket_manage';
 import { SessionPresenceSocket } from './modules/session/session.presence.socket';
+import { SessionCleanupJob, sessionCleanupJob } from './modules/session/session.cleanup.job';
 import { EditorYjsSocket } from './modules/editor/editor.yjs.socket';
 import AuthRoutes from './feature/auth/auth_routes';
 import SessionRoutes from './modules/session/session.routes';
@@ -28,6 +29,7 @@ export class Server {
     private io: SocketIOServer;
     private presenceSocket: SessionPresenceSocket;
     private yjsSocket: EditorYjsSocket;
+    private cleanupJob: SessionCleanupJob;
     private mainRoute: string;
     private routesSrc: { [key: string]: string };
     private allowedOrigins: string[];
@@ -54,6 +56,7 @@ export class Server {
 
         this.presenceSocket = new SessionPresenceSocket();
         this.yjsSocket = new EditorYjsSocket();
+        this.cleanupJob = sessionCleanupJob;
 
         this.mainRoute = '/api/v1';
         this.routesSrc = this.routesSource();
@@ -130,10 +133,11 @@ export class Server {
     }
 
     /**
-     * Inicia el servidor HTTP.
+     * Inicia el servidor HTTP y los jobs programados en segundo plano.
      */
     public listen(): void {
         const datetime = new Date().toISOString();
+        this.cleanupJob.start();
         this.httpServer.listen(this.port, () => {
             const message = `[SERVER] Server enable at Port: ${this.port} at date ${datetime} in ${process.env.NODE_ENV || 'development'} mode.`;
             console.log(message);
@@ -164,5 +168,12 @@ export class Server {
      */
     public getIO(): SocketIOServer {
         return this.io;
+    }
+
+    /**
+     * Obtiene la instancia del Job de limpieza de sesiones.
+     */
+    public getCleanupJob(): SessionCleanupJob {
+        return this.cleanupJob;
     }
 }
