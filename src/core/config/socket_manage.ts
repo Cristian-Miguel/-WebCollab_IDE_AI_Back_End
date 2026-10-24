@@ -3,7 +3,7 @@ import { SessionPresenceSocket, JoinSessionSocketPayload } from '../../modules/s
 
 /**
  * Clase para manejar los eventos de Socket.io e integrar la presencia
- * y validación de límite de sesiones colaborativas (HU-06-08).
+ * y validación de límite de sesiones colaborativas (HU-06-08 y HU-26).
  */
 export class SocketManageEvent {
     private presenceSocket: SessionPresenceSocket;
@@ -38,14 +38,21 @@ export class SocketManageEvent {
             'join_session',
             async (
                 payload: JoinSessionSocketPayload,
-                callback?: (res: { ok: boolean; status: number; participants?: unknown[]; error?: string }) => void
+                callback?: (res: {
+                    ok: boolean;
+                    status: number;
+                    participants?: unknown[];
+                    activeCount?: number;
+                    error?: string;
+                    message?: string;
+                }) => void
             ) => {
                 await this.presenceSocket.handleJoinSession(this.socket, payload, callback);
             }
         );
 
         this.socket.on('disconnect', () => {
-            this.presenceSocket.handleDisconnect(this.socket);
+            void this.presenceSocket.handleDisconnect(this.socket);
         });
     }
 }

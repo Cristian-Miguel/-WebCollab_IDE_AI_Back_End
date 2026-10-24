@@ -5,7 +5,10 @@ import { AddressInfo } from 'net';
 import * as Y from 'yjs';
 import { app, httpServer } from '../src/app';
 import { DatabaseManage } from '../src/core/config/database_manage';
-import { SessionPresenceSocket } from '../src/modules/session/session.presence.socket';
+import {
+    SessionPresenceSocket,
+    WS_DISCONNECT_LIMIT_REACHED
+} from '../src/modules/session/session.presence.socket';
 import {
     SessionCleanupJob,
     DAILY_MIDNIGHT_CRON,
@@ -14,7 +17,7 @@ import {
 } from '../src/modules/session/session.cleanup.job';
 import { EditorYjsSocket } from '../src/modules/editor/editor.yjs.socket';
 import { EditorService } from '../src/modules/editor/editor.service';
-import { RedisPresenceManage } from '../src/core/config/redis_manage';
+import { RedisPresenceManage, REDIS_GLOBAL_ACTIVE_USERS_KEY } from '../src/core/config/redis_manage';
 
 jest.mock('../src/core/config/mail_sender', () => ({
     sendEmail: jest.fn().mockResolvedValue(undefined)
@@ -53,13 +56,14 @@ const registerTestUser = async (email: string, fullName: string) => {
     };
 };
 
-describe('HU-04, HU-06-08, HU-12-14, HU-16 & HU-24: Session, Limit, Yjs Sync, AI Assistant & Session Cleanup Job Tests', () => {
+describe('HU-04, HU-06-08, HU-12-14, HU-16, HU-24 & HU-26: Session, Limit, Yjs Sync, AI Assistant, Cleanup Job & Redis Concurrency Tests', () => {
     let authToken: string;
     let userId: string;
 
     beforeAll(async () => {
         await prisma.$connect();
         await cleanDatabase();
+        SessionPresenceSocket.resetState();
 
         const owner = await registerTestUser('sessionowner@example.com', 'Session Owner User');
         authToken = owner.token;
@@ -356,10 +360,134 @@ describe('HU-04, HU-06-08, HU-12-14, HU-16 & HU-24: Session, Limit, Yjs Sync, AI
             expect(syncLatency).toBeLessThan(200);
             expect(doc2.getText('index.html').toString()).toContain('<!DOCTYPE html>');
 
+            expect(RedisPresenceManage.getPresenceKey()).toBe(REDIS_GLOBAL_ACTIVE_USERS_KEY);
             expect(RedisPresenceManage.getPresenceKey(sessionId)).toBe(`session:${sessionId}:active_users`);
             expect(RedisPresenceManage.sadd(sessionId, userId)).toBe(1);
             expect(RedisPresenceManage.scard(sessionId)).toBe(1);
             expect(RedisPresenceManage.srem(sessionId, userId)).toBe(0);
+        });
+
+        describe('HU-26: Control de Asistencia y Concurrencia en Tiempo Real con Redis Sets (SADD, SCARD, SREM)', () => {
+            it('Should enforce exact 4-connection limit using Redis SADD/SCARD, reject 5th connection with WS Disconnect: Limit reached, and execute SREM on disconnect', async () => {
+                SessionPresenceSocket.resetState();
+                const presenceSocket = new SessionPresenceSocket();
+
+                const createMockSocket = (id: string, uid: string, token: string) => {
+                    const emitted: Array<{ event: string; payload: any }> = [];
+                    const joinedRooms: string[] = [];
+                    let disconnected = false;
+
+                    const mockSocket: any = {
+                        id,
+                        handshake: {
+                            auth: { sessionId, userId: uid, token },
+                            query: { sessionId, userId: uid },
+                            headers: { authorization: `Bearer ${token}` },
+                        },
+                        emit: jest.fn((event: string, payload: any) => {
+                            emitted.push({ event, payload });
+                        }),
+                        join: jest.fn(async (room: string) => {
+                            joinedRooms.push(room);
+                        }),
+                        disconnect: jest.fn(() => {
+                            disconnected = true;
+                        }),
+                        getEmitted: () => emitted,
+                        getJoinedRooms: () => joinedRooms,
+                        isDisconnected: () => disconnected,
+                    };
+                    return mockSocket;
+                };
+
+                const s1 = createMockSocket('sock-1', userId, authToken);
+                const s2 = createMockSocket('sock-2', user2.userId, user2.token);
+                const s3 = createMockSocket('sock-3', user3.userId, user3.token);
+                const s4 = createMockSocket('sock-4', user4.userId, user4.token);
+                const s5 = createMockSocket('sock-5', user5.userId, user5.token);
+
+                // Connect 4 concurrent sockets via handleJoinSession -> SADD on Redis Set
+                const responses = await Promise.all([
+                    new Promise<any>((resolve) =>
+                        presenceSocket.handleJoinSession(s1, { sessionId, userId, token: authToken }, resolve)
+                    ),
+                    new Promise<any>((resolve) =>
+                        presenceSocket.handleJoinSession(s2, { sessionId, userId: user2.userId, token: user2.token }, resolve)
+                    ),
+                    new Promise<any>((resolve) =>
+                        presenceSocket.handleJoinSession(s3, { sessionId, userId: user3.userId, token: user3.token }, resolve)
+                    ),
+                    new Promise<any>((resolve) =>
+                        presenceSocket.handleJoinSession(s4, { sessionId, userId: user4.userId, token: user4.token }, resolve)
+                    ),
+                ]);
+
+                for (const resp of responses) {
+                    expect(resp.ok).toBe(true);
+                    expect(resp.status).toBe(200);
+                }
+
+                // Verify SCARD == 4 in Redis Set
+                expect(RedisPresenceManage.scard(sessionId)).toBe(4);
+                expect(RedisPresenceManage.smembers(sessionId)).toEqual(
+                    expect.arrayContaining([userId, user2.userId, user3.userId, user4.userId])
+                );
+
+                // Attempt 5th connection -> SCARD >= 4 must reject with 'WS Disconnect: Limit reached'
+                const fifthResponse = await new Promise<any>((resolve) =>
+                    presenceSocket.handleJoinSession(
+                        s5,
+                        { sessionId, userId: user5.userId, token: user5.token },
+                        resolve
+                    )
+                );
+
+                expect(fifthResponse.ok).toBe(false);
+                expect(fifthResponse.status).toBe(403);
+                expect(fifthResponse.message).toBe(WS_DISCONNECT_LIMIT_REACHED);
+                expect(s5.isDisconnected()).toBe(true);
+                expect(s5.emit).toHaveBeenCalledWith(
+                    'session_error',
+                    expect.objectContaining({
+                        code: 403,
+                        reason: 'SESSION_FULL',
+                        message: WS_DISCONNECT_LIMIT_REACHED,
+                    })
+                );
+
+                // Disconnect 4th user -> SREM must remove user4 from Redis Set and reduce SCARD to 3
+                const emitPresenceSpy = jest.spyOn(SessionPresenceSocket, 'emitPresenceUpdated');
+                await presenceSocket.handleDisconnect(s4);
+
+                expect(RedisPresenceManage.scard(sessionId)).toBe(3);
+                expect(RedisPresenceManage.sismember(sessionId, user4.userId)).toBe(false);
+                expect(emitPresenceSpy).toHaveBeenCalledWith(
+                    sessionId,
+                    expect.any(Array),
+                    user4.userId
+                );
+                emitPresenceSpy.mockRestore();
+
+                // Now that SCARD is 3 (< 4), 5th user can join and SADD brings SCARD back to 4
+                const s5Retry = createMockSocket('sock-5-retry', user5.userId, user5.token);
+                const retryResponse = await new Promise<any>((resolve) =>
+                    presenceSocket.handleJoinSession(
+                        s5Retry,
+                        { sessionId, userId: user5.userId, token: user5.token },
+                        resolve
+                    )
+                );
+
+                expect(retryResponse.ok).toBe(true);
+                expect(retryResponse.status).toBe(200);
+                expect(RedisPresenceManage.scard(sessionId)).toBe(4);
+                expect(RedisPresenceManage.sismember(sessionId, user5.userId)).toBe(true);
+
+                // Cleanup and restore state for remaining tests
+                await presenceSocket.handleDisconnect(s5Retry);
+                await presenceSocket.handleJoinSession(s4, { sessionId, userId: user4.userId, token: user4.token });
+                SessionPresenceSocket.resetState();
+            });
         });
 
         describe('HU-16: Sugerencias de Código mediante IA (POST /api/v1/ai/suggest)', () => {

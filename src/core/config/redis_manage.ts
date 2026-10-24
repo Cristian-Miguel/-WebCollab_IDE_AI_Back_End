@@ -1,6 +1,7 @@
 import Redis from 'ioredis';
 
 export const REDIS_BLACKLIST_PREFIX = 'blacklist:token:';
+export const REDIS_GLOBAL_ACTIVE_USERS_KEY = 'session::active_users';
 
 interface BlacklistEntry {
     value: string;
@@ -9,7 +10,8 @@ interface BlacklistEntry {
 
 /**
  * Gestor de configuración, presencia y lista negra de tokens en Redis (HU-06-08, HU-12-14, HU-25, HU-26).
- * Soporta conexión mediante ioredis (REDIS_URL) con respaldo en memoria con TTL exacto.
+ * Soporta conexión mediante ioredis (REDIS_URL) y operaciones de conjuntos SADD, SREM, SCARD y SISMEMBER
+ * sobre `session:${sessionId}:active_users` y `session::active_users`.
  */
 export class RedisPresenceManage {
     private static memoryStore: Map<string, Set<string>> = new Map();
@@ -52,7 +54,10 @@ export class RedisPresenceManage {
         return RedisPresenceManage.redisClient;
     }
 
-    public static getPresenceKey(sessionId: string): string {
+    public static getPresenceKey(sessionId?: string): string {
+        if (!sessionId) {
+            return REDIS_GLOBAL_ACTIVE_USERS_KEY;
+        }
         return `session:${sessionId}:active_users`;
     }
 
@@ -163,17 +168,50 @@ export class RedisPresenceManage {
         return -2;
     }
 
+    /**
+     * HU-26: Comando SADD para agregar un userId al Redis Set (`session:${sessionId}:active_users` y `session::active_users`).
+     */
     public static sadd(sessionId: string, userId: string): number {
         const key = RedisPresenceManage.getPresenceKey(sessionId);
         const set = RedisPresenceManage.memoryStore.get(key) ?? new Set<string>();
         set.add(userId);
         RedisPresenceManage.memoryStore.set(key, set);
+
+        // Sincronizar también en la llave canónica `session::active_users`
+        const globalSet = RedisPresenceManage.memoryStore.get(REDIS_GLOBAL_ACTIVE_USERS_KEY) ?? new Set<string>();
+        globalSet.add(`${sessionId}:${userId}`);
+        RedisPresenceManage.memoryStore.set(REDIS_GLOBAL_ACTIVE_USERS_KEY, globalSet);
+
+        const client = RedisPresenceManage.getClient();
+        if (client && client.status === 'ready') {
+            void client.sadd(key, userId).catch(() => {});
+            void client.sadd(REDIS_GLOBAL_ACTIVE_USERS_KEY, `${sessionId}:${userId}`).catch(() => {});
+        }
+
         return set.size;
     }
 
+    /**
+     * HU-26: Comando SREM para eliminar un userId del Redis Set al desconectar.
+     */
     public static srem(sessionId: string, userId: string): number {
         const key = RedisPresenceManage.getPresenceKey(sessionId);
         const set = RedisPresenceManage.memoryStore.get(key);
+
+        const globalSet = RedisPresenceManage.memoryStore.get(REDIS_GLOBAL_ACTIVE_USERS_KEY);
+        if (globalSet) {
+            globalSet.delete(`${sessionId}:${userId}`);
+            if (globalSet.size === 0) {
+                RedisPresenceManage.memoryStore.delete(REDIS_GLOBAL_ACTIVE_USERS_KEY);
+            }
+        }
+
+        const client = RedisPresenceManage.getClient();
+        if (client && client.status === 'ready') {
+            void client.srem(key, userId).catch(() => {});
+            void client.srem(REDIS_GLOBAL_ACTIVE_USERS_KEY, `${sessionId}:${userId}`).catch(() => {});
+        }
+
         if (!set) {
             return 0;
         }
@@ -185,14 +223,46 @@ export class RedisPresenceManage {
         return set.size;
     }
 
+    /**
+     * HU-26: Comando SCARD para obtener la cardinalidad del Redis Set (`session:${sessionId}:active_users`).
+     */
     public static scard(sessionId: string): number {
         const key = RedisPresenceManage.getPresenceKey(sessionId);
         return RedisPresenceManage.memoryStore.get(key)?.size ?? 0;
     }
 
+    /**
+     * HU-26: Comando SISMEMBER para verificar si un userId ya pertenece al Redis Set de la sesión.
+     */
+    public static sismember(sessionId: string, userId: string): boolean {
+        if (!userId) {
+            return false;
+        }
+        const key = RedisPresenceManage.getPresenceKey(sessionId);
+        return RedisPresenceManage.memoryStore.get(key)?.has(userId) ?? false;
+    }
+
+    /**
+     * HU-26: Comando SMEMBERS para listar los usuarios activos en el Redis Set de la sesión.
+     */
     public static smembers(sessionId: string): string[] {
         const key = RedisPresenceManage.getPresenceKey(sessionId);
         return Array.from(RedisPresenceManage.memoryStore.get(key) ?? []);
+    }
+
+    /**
+     * Limpia el Redis Set de una sesión específica.
+     */
+    public static clearSession(sessionId: string): void {
+        const key = RedisPresenceManage.getPresenceKey(sessionId);
+        const members = RedisPresenceManage.smembers(sessionId);
+        const globalSet = RedisPresenceManage.memoryStore.get(REDIS_GLOBAL_ACTIVE_USERS_KEY);
+        if (globalSet) {
+            for (const userId of members) {
+                globalSet.delete(`${sessionId}:${userId}`);
+            }
+        }
+        RedisPresenceManage.memoryStore.delete(key);
     }
 
     public static clearAll(): void {
