@@ -1,1 +1,1 @@
-export { AuthService } from '../../feature/auth/auth_service';
+export { AuthService } from './auth_service';

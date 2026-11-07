@@ -1,1 +1,1 @@
-export { AuthController, authController } from '../../feature/auth/auth_controller';
+export { AuthController, authController } from './auth_controller';

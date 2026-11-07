@@ -11,11 +11,11 @@ import { SocketManageEvent } from './core/config/socket_manage';
 import { SessionPresenceSocket } from './modules/session/session.presence.socket';
 import { SessionCleanupJob, sessionCleanupJob } from './modules/session/session.cleanup.job';
 import { EditorYjsSocket } from './modules/editor/editor.yjs.socket';
-import AuthRoutes from './feature/auth/auth_routes';
+import AuthRoutes from './modules/auth/auth_routes';
 import SessionRoutes from './modules/session/session.routes';
 import AIRoutes from './modules/ai-assistant/ai.routes';
 import { exceptionManage } from './core/exception/exception_manage';
-import UserRoutes from './feature/user/user_routes';
+import UserRoutes from './modules/user/user_routes';
 import cookieParser from 'cookie-parser';
 
 /**

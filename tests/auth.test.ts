@@ -3,10 +3,8 @@ import { app } from '../src/app';
 import { DatabaseManage } from '../src/core/config/database_manage';
 import { JwtManage } from '../src/core/config/jwt_manage';
 import { RedisPresenceManage, REDIS_BLACKLIST_PREFIX } from '../src/core/config/redis_manage';
-
-jest.mock('../src/core/config/mail_sender', () => ({
-    sendEmail: jest.fn().mockResolvedValue(undefined)
-}));
+import { PASSWORD_REGEX } from '../src/modules/auth/auth.validator';
+import * as emailUtil from '../src/shared/utils/email.util';
 
 const prisma = DatabaseManage.getInstance();
 
@@ -46,7 +44,27 @@ describe('Auth Endpoints & HU-25 Redis Token Blacklist Integration Tests', () =>
         }
     };
 
-    it('POST /api/v1/auth/register - Should register a new user and return tokens with jti claim', async () => {
+    it('PASSWORD_REGEX - Should explicitly support all 32 required special characters', () => {
+        const specialChars = [
+            '`', '~', '!', '@', '#', '$', '%', '^', '&', '*', '(', ')',
+            '_', '-', '=', '+', '[', '{', ']', '}', '\\', '|', ';', ':',
+            "'", '"', '<', ',', '.', '>', '/', '?'
+        ];
+
+        for (const char of specialChars) {
+            const candidate = `Ab1${char}cdef`;
+            expect(PASSWORD_REGEX.test(candidate)).toBe(true);
+        }
+
+        expect(PASSWORD_REGEX.test('Abcdef12')).toBe(false);
+    });
+
+    it('POST /api/v1/auth/register - Should register a new user and return 201 Created even without real SMTP credentials', async () => {
+        delete process.env.SMTP_HOST;
+        delete process.env.SMTP_PORT;
+        delete process.env.SMTP_USER;
+        delete process.env.SMTP_PASS;
+
         const res = await request(app)
             .post('/api/v1/auth/register')
             .send(mockUser);
@@ -62,6 +80,38 @@ describe('Auth Endpoints & HU-25 Redis Token Blacklist Integration Tests', () =>
         expect(cookies).toBeDefined();
         expect(cookies[0]).toMatch(/refreshToken/);
         expect(cookies[0]).toMatch(/HttpOnly/);
+    });
+
+    it('POST /api/v1/auth/register - Should still return 201 Created and persist user in Prisma if email sending throws an error', async () => {
+        const sendEmailSpy = jest
+            .spyOn(emailUtil, 'sendEmail')
+            .mockRejectedValueOnce(new Error('SMTP connection refused'));
+
+        const fallbackUser = {
+            email: 'smtpfailuser@example.com',
+            password: 'Password123!',
+            fullName: 'SMTP Fail User',
+            birthDate: '1992-08-15T00:00:00.000Z',
+            role: {
+                name: 'CUSTOMER'
+            }
+        };
+
+        const res = await request(app)
+            .post('/api/v1/auth/register')
+            .send(fallbackUser);
+
+        expect(res.status).toBe(201);
+        expect(res.body.data).toHaveProperty('accessToken');
+        expect(sendEmailSpy).toHaveBeenCalledTimes(1);
+
+        const createdUser = await prisma.user.findUnique({
+            where: { email: fallbackUser.email }
+        });
+        expect(createdUser).not.toBeNull();
+        expect(createdUser?.email).toBe(fallbackUser.email);
+
+        sendEmailSpy.mockRestore();
     });
 
     it('POST /api/v1/auth/login - Should login and return access token + cookie', async () => {

@@ -1,1 +1,1 @@
-export { default } from '../../feature/auth/auth_routes';
+export { default } from './auth_routes';

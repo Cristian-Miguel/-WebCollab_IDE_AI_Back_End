@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { SessionController } from './session.controller';
 import { validateCreateSession, validateJoinSession } from './session.validator';
-import { AuthMiddleware } from '../../feature/auth/auth_middleware';
+import { AuthMiddleware } from '../../modules/auth/auth_middleware';
 import { asyncWrapper } from '../../core/config/async_wrapper';
 
 const router = Router();

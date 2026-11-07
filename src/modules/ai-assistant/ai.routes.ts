@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { AIController } from './ai.controller';
 import { validateAISuggest } from './ai.validator';
 import { aiRateLimitMiddleware } from './ai.rate-limit.middleware';
-import { AuthMiddleware } from '../../feature/auth/auth_middleware';
+import { AuthMiddleware } from '../../modules/auth/auth_middleware';
 import { asyncWrapper } from '../../core/config/async_wrapper';
 
 const router = Router();

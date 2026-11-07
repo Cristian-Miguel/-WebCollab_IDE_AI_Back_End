@@ -1,1 +1,1 @@
-export { AuthMiddleware, authMiddleware } from '../../feature/auth/auth_middleware';
+export { AuthMiddleware, authMiddleware } from './auth_middleware';
